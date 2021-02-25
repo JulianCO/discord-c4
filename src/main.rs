@@ -1,3 +1,6 @@
+use std::cmp;
+use std::string::String;
+
 const COLUMNS : [u64; 7] = 
     [ 0x1u64
     , 0x40u64
@@ -88,12 +91,63 @@ impl Board {
         self.red_pieces = self.red_pieces ^ TURN_INDICATOR;
         self.blue_pieces = self.blue_pieces ^ TURN_INDICATOR;
     }
+    
+    fn display(&self, red : &str, blue : &str, empty : &str, 
+        separator : &str, line_start : &str, line_end : &str, line_separator : &str) -> String {
+        let output_length
+            = BOARD_HEIGHT*BOARD_WIDTH*cmp::max(red.len(), cmp::max(blue.len(), empty.len()))
+            + BOARD_HEIGHT*line_start.len()
+            + BOARD_HEIGHT*line_end.len()
+            + BOARD_HEIGHT*(BOARD_WIDTH - 1)*separator.len()
+            + (BOARD_HEIGHT + 1)*line_separator.len();
+        let mut output_string = String::with_capacity(output_length);
+
+        for y in 0..BOARD_HEIGHT {
+            output_string.push_str(line_separator);
+            output_string.push_str(line_start);
+            for x in 0..(BOARD_WIDTH-1) {
+                output_string.push_str(
+                    match self.slot_at(x, BOARD_HEIGHT - y - 1) {
+                        Slot::RED => red,
+                        Slot::BLUE => blue,
+                        Slot::EMPTY => empty
+                    }
+                );
+                output_string.push_str(separator);
+            }
+            output_string.push_str(
+                match self.slot_at(BOARD_WIDTH - 1, BOARD_HEIGHT - y - 1) {
+                    Slot::RED => red,
+                    Slot::BLUE => blue,
+                    Slot::EMPTY => empty
+                }
+            );
+            output_string.push_str(line_end);
+        }
+        output_string.push_str(line_separator);
+        
+        output_string
+    }
 }
 
 
 
 fn main() {
-    println!("Hello, world!");
+    let mut b = Board::empty_board();
+    b.play_move(3);
+    b.play_move(2);
+    b.play_move(3);
+    b.play_move(3);
+    b.play_move(3);
+    b.play_move(4);
+    b.play_move(4);
+    
+    let example_board = b.display("r", "b", " ", "|", "|", "|\n", "+-+-+-+-+-+-+-+\n");
+    let example_discord = b.display(":red_circle:", ":blue_circle:", ":white_circle:", "", "", "\n", "");
+
+    print!("{}", example_board);
+    println!("");
+    print!("{}", example_discord);
 }
 
 #[cfg(test)]
