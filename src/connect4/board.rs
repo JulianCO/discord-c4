@@ -11,18 +11,35 @@ const COLUMNS : [u64; 7] =
     , 0x1000000000u64 ];
 
 const TURN_INDICATOR : u64 = 0x40000000000u64;
+const GAME_OVER_INDICATOR : u64 = 0x80000000000u64;
 
 const BOARD_HEIGHT : u8 = 6;
 const BOARD_WIDTH : u8 = 7;
 
+#[derive(Debug, PartialEq, Eq)]
+pub enum Player {
+    Red,
+    Blue
+}
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Slot {
-    EMPTY,
-    RED,
-    BLUE
+    Empty,
+    Piece(Player)
 }
 
+#[derive(Debug, PartialEq, Eq)]
+pub enum GameResult {
+    Winner(Player),
+    Tie
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum GameStatus {
+    Turn(Player),
+    GameOver(GameResult)
+}
+    
 /* 
   The board is represented as 2 u64, one indicating the position of the red pieces
   and one indicating the positions of the blue pieces. A piece being present is indicated with a
@@ -44,9 +61,8 @@ pub struct Board {
 }
 
 impl Board {
-    fn drop_piece(&mut self, column : u8, piece : Slot) -> Result<(), ()> {
+    fn drop_piece(&mut self, column : u8, piece : Player) -> Result<(), ()> {
         assert!(column < BOARD_WIDTH);
-        assert!(piece != Slot::EMPTY);
     
         let mut row = COLUMNS[column as usize];
         let limit = row << BOARD_HEIGHT;
@@ -57,9 +73,8 @@ impl Board {
         
         if row < limit {
             match piece {
-                Slot::RED => self.red_pieces = self.red_pieces | row,
-                Slot::BLUE => self.blue_pieces = self.blue_pieces | row,
-                Slot::EMPTY => panic!("active player is empty")
+                Player::Red => self.red_pieces = self.red_pieces | row,
+                Player::Blue => self.blue_pieces = self.blue_pieces | row,
             };
             Ok(())
         } else {
@@ -83,20 +98,20 @@ impl Board {
         
         let location = COLUMNS[x as usize] << y;
         if (self.red_pieces & location) != 0 {
-            Slot::RED
+            Slot::Piece(Player::Red)
         } else if (self.blue_pieces & location) != 0 {
-            Slot::BLUE
+            Slot::Piece(Player::Blue)
         } else {
-            Slot::EMPTY
+            Slot::Empty
         }
     }
     
-    pub fn active_player(&self) -> Slot {
+    pub fn active_player(&self) -> Player {
         if self.red_pieces & TURN_INDICATOR != 0 {
-            Slot::BLUE
+            Player::Blue
         }
         else {
-            Slot::RED
+            Player::Red
         }
     }
     
@@ -122,18 +137,18 @@ impl Board {
             for x in 0..(BOARD_WIDTH-1) {
                 output_string.push_str(
                     match self.slot_at(x, BOARD_HEIGHT - y - 1) {
-                        Slot::RED => red,
-                        Slot::BLUE => blue,
-                        Slot::EMPTY => empty
+                        Slot::Piece(Player::Red) => red,
+                        Slot::Piece(Player::Blue) => blue,
+                        Slot::Empty => empty
                     }
                 );
                 output_string.push_str(separator);
             }
             output_string.push_str(
                 match self.slot_at(BOARD_WIDTH - 1, BOARD_HEIGHT - y - 1) {
-                    Slot::RED => red,
-                    Slot::BLUE => blue,
-                    Slot::EMPTY => empty
+                    Slot::Piece(Player::Red) => red,
+                    Slot::Piece(Player::Blue) => blue,
+                    Slot::Empty => empty
                 }
             );
             output_string.push_str(line_end);
@@ -154,7 +169,7 @@ mod test {
         let e = Board::empty_board();
         for i in 0..7 {
             for j in 0..6 {
-                assert_eq!(e.slot_at(i, j), Slot::EMPTY);
+                assert_eq!(e.slot_at(i, j), Slot::Empty);
             }
         }
     }
@@ -176,30 +191,30 @@ mod test {
     #[test]
     fn example_game() {
         let mut e = Board::empty_board();
-        assert_eq!(e.active_player(), Slot::RED);
-        assert_eq!(e.slot_at(2,0), Slot::EMPTY);
-        assert_eq!(e.slot_at(3,0), Slot::EMPTY);
-        assert_eq!(e.slot_at(2,1), Slot::EMPTY);
+        assert_eq!(e.active_player(), Player::Red);
+        assert_eq!(e.slot_at(2,0), Slot::Empty);
+        assert_eq!(e.slot_at(3,0), Slot::Empty);
+        assert_eq!(e.slot_at(2,1), Slot::Empty);
         e.play_move(2);
-        assert_eq!(e.active_player(), Slot::BLUE);
-        assert_eq!(e.slot_at(2,0), Slot::RED);
-        assert_eq!(e.slot_at(3,0), Slot::EMPTY);
-        assert_eq!(e.slot_at(2,1), Slot::EMPTY);
+        assert_eq!(e.active_player(), Player::Blue);
+        assert_eq!(e.slot_at(2,0), Slot::Piece(Player::Red));
+        assert_eq!(e.slot_at(3,0), Slot::Empty);
+        assert_eq!(e.slot_at(2,1), Slot::Empty);
         e.play_move(3);
-        assert_eq!(e.active_player(), Slot::RED);
-        assert_eq!(e.slot_at(2,0), Slot::RED);
-        assert_eq!(e.slot_at(3,0), Slot::BLUE);
-        assert_eq!(e.slot_at(2,1), Slot::EMPTY);
+        assert_eq!(e.active_player(), Player::Red);
+        assert_eq!(e.slot_at(2,0), Slot::Piece(Player::Red));
+        assert_eq!(e.slot_at(3,0), Slot::Piece(Player::Blue));
+        assert_eq!(e.slot_at(2,1), Slot::Empty);
         e.play_move(2);
-        assert_eq!(e.active_player(), Slot::BLUE);
-        assert_eq!(e.slot_at(2,0), Slot::RED);
-        assert_eq!(e.slot_at(3,0), Slot::BLUE);
-        assert_eq!(e.slot_at(2,1), Slot::RED);
+        assert_eq!(e.active_player(), Player::Blue);
+        assert_eq!(e.slot_at(2,0), Slot::Piece(Player::Red));
+        assert_eq!(e.slot_at(3,0), Slot::Piece(Player::Blue));
+        assert_eq!(e.slot_at(2,1), Slot::Piece(Player::Red));
         e.play_move(4);
-        assert_eq!(e.active_player(), Slot::RED);
-        assert_eq!(e.slot_at(2,0), Slot::RED);
-        assert_eq!(e.slot_at(3,0), Slot::BLUE);
-        assert_eq!(e.slot_at(2,1), Slot::RED);
+        assert_eq!(e.active_player(), Player::Red);
+        assert_eq!(e.slot_at(2,0), Slot::Piece(Player::Red));
+        assert_eq!(e.slot_at(3,0), Slot::Piece(Player::Blue));
+        assert_eq!(e.slot_at(2,1), Slot::Piece(Player::Red));
     }
     
 }
