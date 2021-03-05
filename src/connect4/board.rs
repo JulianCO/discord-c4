@@ -12,8 +12,8 @@ const COLUMNS : [u64; 7] =
 
 const TURN_INDICATOR : u64 = 0x40000000000u64;
 
-const BOARD_HEIGHT : usize = 6;
-const BOARD_WIDTH : usize = 7;
+const BOARD_HEIGHT : u8 = 6;
+const BOARD_WIDTH : u8 = 7;
 
 
 #[derive(Debug, PartialEq, Eq)]
@@ -32,6 +32,9 @@ pub enum Slot {
   
   The bit at position 42 indicates the turn. Both ints have a 0 there when it's red's turn, and
   both have a 1 there when it is blue's turn.
+  
+  The bit at position 43 indicates game over. The bit is set on the pieces of the winning player,
+  or in both in the case of a tie.
 */
 
 #[derive(Debug, PartialEq, Eq)]
@@ -41,10 +44,11 @@ pub struct Board {
 }
 
 impl Board {
-    pub fn play_move(&mut self, column : usize) {
+    fn drop_piece(&mut self, column : u8, piece : Slot) -> Result<(), ()> {
         assert!(column < BOARD_WIDTH);
+        assert!(piece != Slot::EMPTY);
     
-        let mut row = COLUMNS[column];
+        let mut row = COLUMNS[column as usize];
         let limit = row << BOARD_HEIGHT;
         let occupied = self.red_pieces | self.blue_pieces;
         while (row & occupied) != 0 && row != limit {
@@ -52,12 +56,21 @@ impl Board {
         }
         
         if row < limit {
-            match self.active_player() {
+            match piece {
                 Slot::RED => self.red_pieces = self.red_pieces | row,
                 Slot::BLUE => self.blue_pieces = self.blue_pieces | row,
-                Slot::EMPTY => panic!("active player is empty"),
+                Slot::EMPTY => panic!("active player is empty")
             };
-            self.swap_turn();
+            Ok(())
+        } else {
+            Err(())
+        }
+    }
+    
+    pub fn play_move(&mut self, column : u8) {
+        match self.drop_piece(column, self.active_player()) {
+            Ok(_) => self.swap_turn(),
+            Err(_) => {}
         }
     }
     
@@ -65,10 +78,10 @@ impl Board {
         Board {red_pieces : 0, blue_pieces : 0}
     }
     
-    pub fn slot_at(&self, x : usize, y : usize) -> Slot {
+    pub fn slot_at(&self, x : u8, y : u8) -> Slot {
         assert!(x < BOARD_WIDTH && y < BOARD_HEIGHT);
         
-        let location = COLUMNS[x] << y;
+        let location = COLUMNS[x as usize] << y;
         if (self.red_pieces & location) != 0 {
             Slot::RED
         } else if (self.blue_pieces & location) != 0 {
@@ -94,12 +107,13 @@ impl Board {
     
     pub fn display(&self, red : &str, blue : &str, empty : &str, 
         separator : &str, line_start : &str, line_end : &str, line_separator : &str) -> String {
+        let (bh, bw) = (BOARD_HEIGHT as usize, BOARD_WIDTH as usize);
         let output_length
-            = BOARD_HEIGHT*BOARD_WIDTH*cmp::max(red.len(), cmp::max(blue.len(), empty.len()))
-            + BOARD_HEIGHT*line_start.len()
-            + BOARD_HEIGHT*line_end.len()
-            + BOARD_HEIGHT*(BOARD_WIDTH - 1)*separator.len()
-            + (BOARD_HEIGHT + 1)*line_separator.len();
+            = bh*bw*cmp::max(red.len(), cmp::max(blue.len(), empty.len()))
+            + bh*line_start.len()
+            + bh*line_end.len()
+            + bh*(bw - 1)*separator.len()
+            + (bh + 1)*line_separator.len();
         let mut output_string = String::with_capacity(output_length);
 
         for y in 0..BOARD_HEIGHT {
