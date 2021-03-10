@@ -87,3 +87,22 @@ fn test_game_1() {
     test_game(&game, GameResult::Winner(Player::Blue));
 }
 
+#[test]
+fn test_game_2() {
+    let game = vec![3, 3, 3, 5, 5, 2, 3, 3, 2, 2, 2, 2, 6, 1, 4, 6, 6, 6, 1, 3, 1, 0, 1, 1, 4, 6, 4];
+    test_game(&game, GameResult::Winner(Player::Red));
+}
+
+#[test]
+fn test_game_3() {
+    let game = vec![2, 3, 3, 3, 2, 2, 5, 5, 3, 5, 5, 2, 2, 6, 6, 3, 3, 5, 4, 0, 0, 0, 5, 6, 1, 1, 1, 6, 0, 4];
+    test_game(&game, GameResult::Winner(Player::Blue));
+}
+
+#[test]
+fn test_game_4() {
+    let game = vec![4, 3, 3, 3, 3, 4, 5, 4, 4, 0, 3, 0, 3, 4, 2, 4, 1, 0, 0, 0, 0, 1, 1, 1, 1, 1, 2, 2, 2, 5, 5, 5, 6, 6, 6, 5, 6, 5, 2, 2, 6, 6];
+    test_game(&game, GameResult::Tie);
+}
+
+
