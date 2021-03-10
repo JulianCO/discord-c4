@@ -1,6 +1,8 @@
 use std::cmp;
 use std::string::String;
 
+mod magic_numbers;
+
 const COLUMNS : [u64; 7] = 
     [ 0x1u64
     , 0x40u64
@@ -9,6 +11,16 @@ const COLUMNS : [u64; 7] =
     , 0x1000000u64
     , 0x40000000u64
     , 0x1000000000u64 ];
+
+const TOP_ROW : u64 = 
+                0x20u64 | 
+                0x800u64 | 
+                0x20000u64 | 
+                0x800000u64 | 
+                0x20000000u64 | 
+                0x800000000u64 |
+                0x20000000000u64;
+                
 
 const TURN_INDICATOR : u64 = 0x40000000000u64;
 const GAME_OVER_INDICATOR : u64 = 0x80000000000u64;
@@ -83,9 +95,11 @@ impl Board {
     }
     
     pub fn play_move(&mut self, column : u8) {
-        match self.drop_piece(column, self.active_player()) {
-            Ok(_) => self.swap_turn(),
-            Err(_) => {}
+        if let GameStatus::Turn(player) = self.game_status() {
+            match self.drop_piece(column, player) {
+                Ok(_) => self.update_game_status(),
+                Err(_) => {}
+            }
         }
     }
     
@@ -134,6 +148,29 @@ impl Board {
         let top_position_in_column = COLUMNS[column as usize] << (BOARD_HEIGHT - 1);
         top_position_in_column & (self.red_pieces | self.blue_pieces) != 0
     }
+    
+    fn update_game_status(&mut self) {
+        let pieces_to_check = // the positions to check for a possible connect 4 win
+            match self.active_player() {
+                Player::Red => self.red_pieces,
+                Player::Blue => self.blue_pieces
+            };
+        let four_in_line = magic_numbers::MAGIC_NUMBERS.iter().any(|&x| x & pieces_to_check == x);
+        if four_in_line {
+            match self.active_player() {
+                Player::Red => self.red_pieces = self.red_pieces | GAME_OVER_INDICATOR,
+                Player::Blue => self.blue_pieces = self.blue_pieces | GAME_OVER_INDICATOR
+            };
+        } 
+        else if TOP_ROW & (self.red_pieces | self.blue_pieces) == TOP_ROW {
+            self.red_pieces = self.red_pieces | GAME_OVER_INDICATOR;
+            self.blue_pieces = self.blue_pieces | GAME_OVER_INDICATOR;
+        } 
+        else {
+            self.swap_turn();
+        }
+    }
+        
     
     fn swap_turn(&mut self) {
         self.red_pieces = self.red_pieces ^ TURN_INDICATOR;
@@ -192,95 +229,6 @@ impl Board {
 
 
 #[cfg(test)]
-mod test {
-    use super::*;
-    
-    fn test_game(moves : &[u8], expected_result : GameResult) {
-        let mut e = Board::empty_board();
-        for k in moves {
-            assert!(e.is_move_legal(*k));
-            e.play_move(*k);
-        }
-        assert!(e.game_status() == GameStatus::GameOver(expected_result));
-    }
-    
-    #[test]
-    fn empty_is_empty() {
-        let e = Board::empty_board();
-        for i in 0..7 {
-            for j in 0..6 {
-                assert_eq!(e.slot_at(i, j), Slot::Empty);
-            }
-        }
-    }
-    
-    #[test]
-    #[should_panic]
-    fn out_of_bounds_index_h() {
-        let e = Board::empty_board();
-        let _x = e.slot_at(7,0);
-    }
-    
-    #[test]
-    #[should_panic]
-    fn out_of_bounds_index_v() {
-        let e = Board::empty_board();
-        let _x = e.slot_at(0,6);
-    }
-    
-    #[test]
-    fn example_game_1() {
-        let mut e = Board::empty_board();
-        assert_eq!(e.active_player(), Player::Red);
-        assert_eq!(e.slot_at(2,0), Slot::Empty);
-        assert_eq!(e.slot_at(3,0), Slot::Empty);
-        assert_eq!(e.slot_at(2,1), Slot::Empty);
-        e.play_move(2);
-        assert_eq!(e.active_player(), Player::Blue);
-        assert_eq!(e.slot_at(2,0), Slot::Piece(Player::Red));
-        assert_eq!(e.slot_at(3,0), Slot::Empty);
-        assert_eq!(e.slot_at(2,1), Slot::Empty);
-        e.play_move(3);
-        assert_eq!(e.active_player(), Player::Red);
-        assert_eq!(e.slot_at(2,0), Slot::Piece(Player::Red));
-        assert_eq!(e.slot_at(3,0), Slot::Piece(Player::Blue));
-        assert_eq!(e.slot_at(2,1), Slot::Empty);
-        e.play_move(2);
-        assert_eq!(e.active_player(), Player::Blue);
-        assert_eq!(e.slot_at(2,0), Slot::Piece(Player::Red));
-        assert_eq!(e.slot_at(3,0), Slot::Piece(Player::Blue));
-        assert_eq!(e.slot_at(2,1), Slot::Piece(Player::Red));
-        e.play_move(4);
-        assert_eq!(e.active_player(), Player::Red);
-        assert_eq!(e.slot_at(2,0), Slot::Piece(Player::Red));
-        assert_eq!(e.slot_at(3,0), Slot::Piece(Player::Blue));
-        assert_eq!(e.slot_at(2,1), Slot::Piece(Player::Red));
-    }
-    
-    #[test]
-    fn filling_up_a_column() {
-        let mut e = Board::empty_board();
-        assert!(e.is_move_legal(2));
-        e.play_move(2);
-        assert!(e.is_move_legal(2));
-        e.play_move(2);
-        assert!(e.is_move_legal(2));
-        e.play_move(2);
-        assert!(e.is_move_legal(2));
-        e.play_move(2);
-        assert!(e.is_move_legal(2));
-        e.play_move(2);
-        assert!(e.is_move_legal(2));
-        e.play_move(2);
-        assert!(!e.is_move_legal(2));
-        assert!(e.is_move_legal(3));
-    }
-    
-    #[test]
-    fn test_game_1() {
-        let game = vec![3, 3, 2, 1, 3, 5, 2, 2, 4, 3, 1, 2, 5, 1, 1, 3, 5, 5, 5, 2, 1, 2];
-        test_game(&game, GameResult::Winner(Player::Blue));
-    }
-    
-}
+mod test;
+
 
