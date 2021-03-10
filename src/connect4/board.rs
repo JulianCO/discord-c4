@@ -106,7 +106,22 @@ impl Board {
         }
     }
     
-    pub fn active_player(&self) -> Player {
+    pub fn game_status(&self) -> GameStatus {
+        if self.red_pieces & self.blue_pieces & GAME_OVER_INDICATOR != 0 {
+            GameStatus::GameOver(GameResult::Tie)
+        }
+        else if self.red_pieces & GAME_OVER_INDICATOR != 0 {
+            GameStatus::GameOver(GameResult::Winner(Player::Red))
+        } 
+        else if self.blue_pieces & GAME_OVER_INDICATOR != 0 {
+            GameStatus::GameOver(GameResult::Winner(Player::Blue))
+        }
+        else {
+            GameStatus::Turn(self.active_player())
+        }
+    }
+    
+    fn active_player(&self) -> Player {
         if self.red_pieces & TURN_INDICATOR != 0 {
             Player::Blue
         }
@@ -115,9 +130,25 @@ impl Board {
         }
     }
     
+    fn is_column_full(&self, column: u8) -> bool {
+        let top_position_in_column = COLUMNS[column as usize] << (BOARD_HEIGHT - 1);
+        top_position_in_column & (self.red_pieces | self.blue_pieces) != 0
+    }
+    
     fn swap_turn(&mut self) {
         self.red_pieces = self.red_pieces ^ TURN_INDICATOR;
         self.blue_pieces = self.blue_pieces ^ TURN_INDICATOR;
+    }
+    
+    pub fn is_move_legal(&self, column: u8) -> bool {
+        if column >= BOARD_WIDTH {
+            false
+        } else {
+            match self.game_status() {
+                GameStatus::Turn(_) => !self.is_column_full(column),
+                _ => false
+            }
+        }
     }
     
     pub fn display(&self, red : &str, blue : &str, empty : &str, 
@@ -164,6 +195,15 @@ impl Board {
 mod test {
     use super::*;
     
+    fn test_game(moves : &[u8], expected_result : GameResult) {
+        let mut e = Board::empty_board();
+        for k in moves {
+            assert!(e.is_move_legal(*k));
+            e.play_move(*k);
+        }
+        assert!(e.game_status() == GameStatus::GameOver(expected_result));
+    }
+    
     #[test]
     fn empty_is_empty() {
         let e = Board::empty_board();
@@ -189,7 +229,7 @@ mod test {
     }
     
     #[test]
-    fn example_game() {
+    fn example_game_1() {
         let mut e = Board::empty_board();
         assert_eq!(e.active_player(), Player::Red);
         assert_eq!(e.slot_at(2,0), Slot::Empty);
@@ -215,6 +255,31 @@ mod test {
         assert_eq!(e.slot_at(2,0), Slot::Piece(Player::Red));
         assert_eq!(e.slot_at(3,0), Slot::Piece(Player::Blue));
         assert_eq!(e.slot_at(2,1), Slot::Piece(Player::Red));
+    }
+    
+    #[test]
+    fn filling_up_a_column() {
+        let mut e = Board::empty_board();
+        assert!(e.is_move_legal(2));
+        e.play_move(2);
+        assert!(e.is_move_legal(2));
+        e.play_move(2);
+        assert!(e.is_move_legal(2));
+        e.play_move(2);
+        assert!(e.is_move_legal(2));
+        e.play_move(2);
+        assert!(e.is_move_legal(2));
+        e.play_move(2);
+        assert!(e.is_move_legal(2));
+        e.play_move(2);
+        assert!(!e.is_move_legal(2));
+        assert!(e.is_move_legal(3));
+    }
+    
+    #[test]
+    fn test_game_1() {
+        let game = vec![3, 3, 2, 1, 3, 5, 2, 2, 4, 3, 1, 2, 5, 1, 1, 3, 5, 5, 5, 2, 1, 2];
+        test_game(&game, GameResult::Winner(Player::Blue));
     }
     
 }
