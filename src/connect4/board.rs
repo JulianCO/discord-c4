@@ -59,8 +59,9 @@ pub enum GameStatus {
   
   The positions are assigned, LSB first, from the bottom left of the board, and going upwards. 
   
-  The bit at position 42 indicates the turn. Both ints have a 0 there when it's red's turn, and
-  both have a 1 there when it is blue's turn.
+  The bit at position 42 indicates the turn. This bit is set to 1 on the pieces of the player
+  whose turn it is. i.e. bit 42 of red_pieces is set if (and only if) it's red's turn, and
+  similarly for blue_pieces and blue.
   
   The bit at position 43 indicates game over. The bit is set on the pieces of the winning player,
   or in both in the case of a tie.
@@ -73,6 +74,18 @@ pub struct Board {
 }
 
 impl Board {
+    pub fn serialize(&self) -> (u64, u64) {
+        (self.red_pieces, self.blue_pieces)
+    }
+    
+    pub fn unserialize(repr : (u64, u64)) -> Board {
+        let (red_pieces, blue_pieces) = repr;
+        Board {
+            red_pieces,
+            blue_pieces
+        }
+    }
+    
     fn drop_piece(&mut self, column : u8, piece : Player) -> Result<(), ()> {
         assert!(column < BOARD_WIDTH);
     
@@ -104,7 +117,7 @@ impl Board {
     }
     
     pub fn empty_board() -> Board {
-        Board {red_pieces : 0, blue_pieces : 0}
+        Board {red_pieces : TURN_INDICATOR, blue_pieces : 0}
     }
     
     pub fn slot_at(&self, x : u8, y : u8) -> Slot {
@@ -137,10 +150,10 @@ impl Board {
     
     fn active_player(&self) -> Player {
         if self.red_pieces & TURN_INDICATOR != 0 {
-            Player::Blue
+            Player::Red
         }
         else {
-            Player::Red
+            Player::Blue
         }
     }
     

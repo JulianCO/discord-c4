@@ -63,6 +63,28 @@ fn example_game_1() {
 }
 
 #[test]
+fn serialize_works() {
+    let mut b = Board::empty_board();
+
+    b.play_move(3);
+    b.play_move(2);
+    b.play_move(3);
+    b.play_move(3);
+    b.play_move(3);
+    b.play_move(4);
+    b.play_move(4);
+    
+    assert!(b.serialize() == (36438016, 4398064340992));
+}
+
+#[test]
+fn unserialize_works() {
+    let b = Board::unserialize((36438016, 4398064340992));
+    
+    assert_eq!(b.display("r", "b", "x", "", "", "", ""), "xxxxxxxxxxxxxxxxxrxxxxxxbxxxxxxrrxxxxbrbxx");
+}
+
+#[test]
 fn filling_up_a_column() {
     let mut e = Board::empty_board();
     assert!(e.is_move_legal(2));
