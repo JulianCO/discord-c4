@@ -1,12 +1,7 @@
 mod connect4;
 
-use crate::connect4::board::Board;
-
-extern {
-    fn times_pi_rounded(n: u32) -> u32;
-    fn initialize_module();
-    fn flip_coin() -> u8;
-}
+use connect4::board::Board;
+use connect4::monte_carlo_ai;
 
 fn main() {
     let mut b = Board::empty_board();
@@ -25,26 +20,14 @@ fn main() {
     println!("");
     print!("{}", example_discord);
     
-    unsafe {
-        initialize_module();
-    }
-    let seventy_two;
-    unsafe {
-        seventy_two = times_pi_rounded(23);
-    }
-    println!("{}", seventy_two);
-    let mut x;
-    for _i in 0..10 {
-        unsafe {
-            x = flip_coin();
-        }
-        if x == 0 {
-            println!("Heads!");
-        } else {
-            println!("Tails!");
-        }
-    }
+    let suggested_move = monte_carlo_ai::ai_move(&b, 32768);
     
+    match suggested_move {
+        Ok(x) => 
+            println!("The ai suggest playing the {} column", x+1),
+        Err(_) =>
+            println!("The AI failed!")
+    };
 }
 
 
