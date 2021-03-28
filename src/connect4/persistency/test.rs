@@ -104,4 +104,46 @@ fn test_sequencial_games_in_database() {
     drop(conn);
     fs::remove_file("test3.sqlite").expect("failed to remove temp database");
 }
+
+#[test]
+fn create_interact_delete() {
+    let _ = fs::remove_file("test4.sqlite");
+    let mut conn = initialize("test4.sqlite").expect("Failed to create database");
     
+    let server_id = 3;
+    let red_player_id = 22;
+    let blue_player_id = 33;
+    
+    let match_id1 = new_human_match(&mut conn, server_id, red_player_id, blue_player_id).expect("failed to create match");
+    
+    let mut ongoing_match = retrieve_match_by_player(&conn, server_id, blue_player_id).expect("failed to retrieve game");
+    
+    let message_id = 12;
+    
+    register_interaction(&conn, message_id, &ongoing_match).expect("failed to register interaction");
+    
+    let error1 = search_interaction(&conn, message_id, blue_player_id).err().expect("No interaction should have been found");
+    assert_eq!(error1, Error::NotCompleted(NotCompletedReason::NoSuchInteraction));
+    
+    search_interaction(&conn, message_id, red_player_id).expect("Interaction not found");
+    
+    let mut board = 
+        match &mut ongoing_match {
+            OngoingMatch::ComputerMatch(_) =>
+                panic!("Match should be a human match"),
+            OngoingMatch::HumanMatch(h) =>
+                &mut h.board
+        };
+    
+    board.play_move(2);
+    
+    register_interaction(&conn, message_id, &ongoing_match).expect("failed to register interaction");
+    
+    let error2 = search_interaction(&conn, message_id, red_player_id).err().expect("No interaction should have been found");
+    assert_eq!(error2, Error::NotCompleted(NotCompletedReason::NoSuchInteraction));
+    
+    search_interaction(&conn, message_id, blue_player_id).expect("Interaction not found");
+    
+    drop(conn);
+    fs::remove_file("test4.sqlite").expect("failed to remove temp database");
+}

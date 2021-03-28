@@ -1,9 +1,9 @@
 use rusqlite::{Connection};
 use rusqlite::params;
-use std::fmt::format;
+use rusqlite::OptionalExtension;
 use std::string::String;
 
-use crate::connect4::board::Board;
+use crate::connect4::board::{Board, GameStatus, Player};
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum NotCompletedReason {
@@ -13,6 +13,8 @@ pub enum NotCompletedReason {
     PlayerHasNoMatches,
     UnrecoverableError,
     InvalidAiLevel,
+    InteractionRequestedForGameOver,
+    NoSuchInteraction
 }
 
 #[derive(Debug, PartialEq)]
@@ -46,6 +48,13 @@ pub enum OngoingMatch {
     ComputerMatch(ComputerMatch)
 }
 
+pub struct PendingInteraction {
+    interaction_id : u64,
+    match_id : u64,
+    message_id : u64,
+    player_id : u64
+}
+
 struct DatabaseRow {
     match_id : i64,
     server_id : i64,
@@ -58,6 +67,17 @@ struct DatabaseRow {
 impl From<rusqlite::Error> for Error {
     fn from(e : rusqlite::Error) -> Error {
         Error::SqliteError(e)
+    }
+}
+
+impl OngoingMatch {
+    pub fn get_id(&self) -> u64 {
+        match self {
+            OngoingMatch::HumanMatch(h) =>
+                h.match_id,
+            OngoingMatch::ComputerMatch(c) => 
+                c.match_id
+        }
     }
 }
 
@@ -75,6 +95,15 @@ pub fn initialize(db_name : &str) -> Result<Connection> {
             red_pieces INTEGER NOT NULL,
             blue_pieces INTEGER NOT NULL
             );", params![])?;
+    
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS interactions (
+            interaction_id INTEGER PRIMARY KEY,
+            message_id INTEGER NOT NULL,
+            match_id INTEGER NOT NULL,
+            prompted_player_id INTEGER NOT NULL
+            );", params![])?;
+    
     Ok(conn)
 }
 
@@ -273,7 +302,7 @@ fn data_row_to_match(row : &DatabaseRow) -> OngoingMatch {
             
 
 pub fn retrieve_match_by_player(conn : &Connection, server_id : u64, player_id : u64) -> Result<OngoingMatch> {
-    let corresponding_row = conn.query_row(
+    let corresponding_row_opt = conn.query_row(
         "SELECT match_id, red_player_id, blue_player_id, red_pieces, blue_pieces
             FROM matches 
             WHERE server_id=?1
@@ -289,11 +318,46 @@ pub fn retrieve_match_by_player(conn : &Connection, server_id : u64, player_id :
                 red_pieces : row.get(3)?,
                 blue_pieces : row.get(4)?
             })
-        ).expect("This query right here failed");
-    Ok(data_row_to_match(&corresponding_row))
+        ).optional()?;
+    match corresponding_row_opt {
+        None => 
+            Err(Error::NotCompleted(NotCompletedReason::PlayerHasNoMatches)),
+        Some(corresponding_row) =>
+            Ok(data_row_to_match(&corresponding_row))
+    }
+}
+
+pub fn retrieve_match_by_id(conn : &Connection, match_id : u64) -> Result<OngoingMatch> {
+    let corresponding_row_opt = conn.query_row(
+        "SELECT match_id, server_id, red_player_id, blue_player_id, red_pieces, blue_pieces
+            FROM matches 
+            WHERE match_id = ?1
+            ;",
+        params![match_id as i64],
+        |row| 
+            Ok( DatabaseRow {
+                match_id : row.get(0)?,
+                server_id : row.get(1)?,
+                red_player_id : row.get(2)?,
+                blue_player_id : row.get(3)?,
+                red_pieces : row.get(4)?,
+                blue_pieces : row.get(5)?
+            })
+        ).optional()?;
+    match corresponding_row_opt {
+        None => 
+            Err(Error::NotCompleted(NotCompletedReason::UnrecoverableError)),
+        Some(corresponding_row) =>
+            Ok(data_row_to_match(&corresponding_row))
+    }
 }
 
 pub fn update_match_board(conn : &Connection, match_id : u64, board : &Board) -> Result<()> {
+    conn.execute(
+        "DELETE FROM interactions
+            WHERE match_id = ?1;",
+        params![match_id as i64])?;
+
     let (red_pieces, blue_pieces) = board.serialize();
     conn.execute(
         "UPDATE matches
@@ -303,6 +367,73 @@ pub fn update_match_board(conn : &Connection, match_id : u64, board : &Board) ->
     Ok(())
 }
 
+pub fn delete_match(conn : &Connection, match_id : u64) -> Result<()> {
+    conn.execute(
+        "DELETE FROM matches
+            WHERE match_id = ?1;",
+        params![match_id as i64])?;
+        
+    conn.execute(
+        "DELETE FROM interactions
+            WHERE match_id = ?1;",
+        params![match_id as i64])?;
+    
+    Ok(())
+}
+
+pub fn search_interaction(conn : &Connection, message_id : u64, player_id : u64) -> Result<OngoingMatch> {
+    let found_match_opt : Option<i64> = conn.query_row(
+        "SELECT match_id FROM interactions
+            WHERE message_id = ?1 AND prompted_player_id = ?2;",
+        params![message_id as i64, player_id as i64],
+        |row| row.get(0)).optional()?;
+    
+    match found_match_opt {
+        None =>
+            Err(Error::NotCompleted(NotCompletedReason::NoSuchInteraction)),
+        Some(found_match) =>
+            retrieve_match_by_id(conn, found_match as u64)
+    }
+}
+            
+
+pub fn register_interaction(conn : &Connection, message_id : u64, ongoing_match : &OngoingMatch) -> Result<()> {
+    conn.execute(
+        "DELETE FROM interactions
+            WHERE match_id = ?1;",
+        params![ongoing_match.get_id() as i64])?;
+    
+    let player_id = 
+        match ongoing_match {
+            OngoingMatch::HumanMatch(h) =>
+                match h.board.game_status() {
+                    GameStatus::Turn(t) =>
+                        if t == Player::Red {
+                            Ok(h.red_player_id)
+                        }
+                        else {
+                            Ok(h.blue_player_id)
+                        },
+                    GameStatus::GameOver(_) =>
+                        Err(Error::NotCompleted(NotCompletedReason::InteractionRequestedForGameOver))
+                },
+            OngoingMatch::ComputerMatch(c) =>
+                match c.board.game_status() {
+                    GameStatus::Turn(_) => 
+                        Ok(c.player_id),
+                    GameStatus::GameOver(_) =>
+                        Err(Error::NotCompleted(NotCompletedReason::InteractionRequestedForGameOver))
+                }
+        }?;
+                
+    conn.execute(
+        "INSERT INTO interactions (message_id, match_id, prompted_player_id)
+            VALUES (?1, ?2, ?3);",
+        params![message_id as i64, ongoing_match.get_id() as i64, player_id as i64])?;
+    
+    Ok(())
+}
+        
 
 #[cfg(test)]
 mod test;
