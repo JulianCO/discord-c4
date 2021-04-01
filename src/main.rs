@@ -1,9 +1,206 @@
 mod connect4;
 
-use connect4::board::Board;
-use connect4::monte_carlo_ai;
+use self::connect4::board::Board;
+use self::connect4::monte_carlo_ai;
+use self::connect4::persistency;
+use self::connect4::persistency::OngoingMatch;
+use rusqlite::Connection;
+use discord::Discord;
+use discord::model::
+    { Event
+    , UserId
+    , MessageId
+    , Message
+    , ChannelId };
+use std::env;
+use std::str::FromStr;
+use rand;
+
+// invite through https://discord.com/api/oauth2/authorize?client_id=805143667392118794&scope=bot&permissions=3136
+
+#[derive(Debug, PartialEq)]
+struct MatchId(pub u64);
+
+#[derive(Debug, PartialEq, Clone, Copy)]
+enum HelpTopic {
+    General,
+    Challenge,
+    Play
+}
+
+#[derive(Debug, PartialEq)]
+enum PlayOrder {
+    GoFirst,
+    GoSecond,
+    Random
+}
+
+#[derive(Debug, PartialEq)]
+enum Request {
+    Ignore,
+    Help(HelpTopic),
+    Challenge(ChannelId, UserId, UserId, PlayOrder),
+    ChallengeBot(ChannelId, UserId, u8, PlayOrder),
+    PlayMove(ChannelId, UserId, u8),
+    RespondToInteraction(UserId, MessageId, u8),
+    SeeGame(ChannelId, UserId),
+    Resign(ChannelId, UserId)
+}
+
+enum GameOverReason {
+    PlayerWon,
+    Tie,
+    Resignation
+}
+
+enum Response {
+    ShowGame(OngoingMatch),
+    ShowHelp(HelpTopic),
+    ShowChallengeMessage(UserId, UserId),
+    ShowHumanMatchOver(UserId, UserId, GameOverReason),
+    ShowComputerMatchOver(bool, GameOverReason),
+    ErrorPlayerAlreadyPlaying(UserId)
+}
+    
 
 fn main() {
+    let discord = Discord::from_bot_token(&env::var("DISCORD_TOKEN").expect("DISCORD_TOKEN not set in environment"))
+        .expect("login failed");
+    
+    let mut conn = persistency::initialize("test_env.sqlite").expect("failed to initialize database");
+    
+    let (mut connection, _) = discord.connect().expect("connect failed");
+    let bot_id = discord.get_current_user().expect("failed to find self").id;
+    println!("Logged in and ready! My id is: {}", bot_id.0);
+    
+    loop { 
+        match connection.recv_event() {
+            Ok(Event::MessageCreate(message)) => {
+                println!("message sent with content: {}", message.content);
+                let request = parse_request(&message, &bot_id);
+                println!("Understood request : {:?}", request);
+                let responses = process_request(&mut conn, &request);
+                communicate_responses(&mut conn, &discord, message.channel_id, &responses);
+            }
+            Ok(_) => {}
+            Err(discord::Error::Closed(code, body)) => {
+                println!("Gateway closed on us with code {:?}: {}", code, body);
+                break;
+            }
+            Err(err) => println!("Receive error: {:?}", err),
+        }
+    }
+}
+
+fn parse_request(message : &Message, bot_id : &UserId) -> Request {
+    if !message.content.starts_with("!c4 ") {
+        Request::Ignore
+    } 
+    else {
+        if message.content.starts_with("!c4 challenge") {
+            if let Some(other_player) = message.mentions.get(0) { 
+                if other_player.id == *bot_id {
+                    Request::ChallengeBot(message.channel_id, message.author.id, 0, PlayOrder::Random)
+                }
+                else {
+                    Request::Challenge(message.channel_id, message.author.id, other_player.id, PlayOrder::Random)
+                }
+            }
+            else {
+                Request::Help(HelpTopic::Challenge)
+            }
+        } else if let Some(move_no) = message.content.strip_prefix("!c4 play ") {
+            if let Ok(n) = u8::from_str(move_no.trim()) {
+                if n > 7 || n < 1 {
+                    Request::Help(HelpTopic::Play)
+                } else {
+                    Request::PlayMove(message.channel_id, message.author.id, n-1)
+                }
+            } 
+            else {
+                Request::Help(HelpTopic::Play)
+            }
+        } 
+        else if message.content.starts_with("!c4 resign") {
+            Request::Resign(message.channel_id, message.author.id)
+        }
+        else if message.content.starts_with("!c4 see") {
+            Request::SeeGame(message.channel_id, message.author.id)
+        }
+        else {
+            Request::Help(HelpTopic::General)
+        }
+    }
+}
+
+fn process_request(conn : &mut Connection, request: &Request) -> Vec<Response> {
+    match request {
+        Request::Ignore => {
+            vec![]
+        }
+        Request::Help(help_topic) => {
+            vec![Response::ShowHelp(*help_topic)]
+        }
+        Request::Challenge(_channel, _challenger, _challenged, _play_order) => {
+            vec![]
+        }
+        Request::ChallengeBot(channel_id, player_id, ai_level, play_order) => {
+            /*let new_match = 
+                match play_order {
+                    PlayOrder::GoFirst =>
+                        new_computer_match(conn, channel_id.0, player_id.0, true, ai_level),
+                    PlayOrder::GoSecond =>
+                        new_computer_match(conn, channel_id.0, player_id.0, false, ai_level),
+                    PlayOrder::Random = >
+                        new_computer_match(conn, channel_id.0, player_id.0, rand::random(), ai_level)
+                };
+            match new_match {
+                Ok(_) => {
+                    if let mut m = retrieve_match_by_player(conn, channel.id.0, player.id.0).expect("match should exist");*/
+            vec![]
+                    
+        }
+        Request::PlayMove(_channel, _player_id, _move_no) => {
+            vec![]
+        }
+        Request::RespondToInteraction(_player_id, _message_id, _move_no) => {
+            vec![]
+        }
+        Request::SeeGame(_channel, _player_id) => {
+            vec![]
+        }
+        Request::Resign(_channel, _player_id) => {
+            vec![]
+        }
+    }
+}
+
+fn communicate_responses(conn : &mut Connection, discord : &Discord, channel_id : ChannelId, responses : &Vec<Response>) -> persistency::Result<()> {
+    for r in responses {
+        communicate_response(conn, discord, channel_id, r)?;
+    }
+    Ok(())
+}
+
+fn communicate_response(conn : &mut Connection, discord : &Discord, channel_id : ChannelId, response : &Response) -> persistency::Result<()> {
+    match response {
+        Response::ShowGame(_ongoing_match) => 
+            Ok(()),
+        Response::ShowHelp(_help_topic) =>
+            Ok(()),
+        Response::ShowChallengeMessage(_challenger, _challenged) =>
+            Ok(()),
+        Response::ShowHumanMatchOver(_winner, _loser, _game_over_reason) =>
+            Ok(()),
+        Response::ShowComputerMatchOver(_win, _game_over_reason) =>
+            Ok(()),
+        Response::ErrorPlayerAlreadyPlaying(_user_id) =>
+            Ok(())
+    }
+}
+
+
+fn old_main() {
     let mut b = Board::empty_board();
     b.play_move(3);
     b.play_move(2);
@@ -29,5 +226,3 @@ fn main() {
             println!("The AI failed!")
     };
 }
-
-

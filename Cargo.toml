@@ -8,6 +8,8 @@ build = "build.rs"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+discord = { git = "https://github.com/SpaceManiac/discord-rs" }
+rand = "0.8.0"
 
 [dependencies.rusqlite]
 version = "0.24.2"
