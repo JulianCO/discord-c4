@@ -1,6 +1,6 @@
 extern crate cc;
 
-fn main() { 
+fn main() {
     println!("cargo:rerun-if-changed=src/connect4/ai_c_files/board.c");
     println!("cargo:rerun-if-changed=src/connect4/ai_c_files/board.h");
     println!("cargo:rerun-if-changed=src/connect4/ai_c_files/montecarlo.c");
@@ -16,4 +16,3 @@ fn main() {
         .file("src/connect4/ai_c_files/called_from_rust.c")
         .compile("cfiles");
 }
-
