@@ -50,6 +50,12 @@ enum Request {
     Resign(ChannelId, UserId)
 }
 
+enum UserError {
+    PlayerAlreadyPlaying(UserId),
+    PlayerNotPlaying(UserId),
+    NotYourTurn(UserId)
+}
+
 enum GameOverReason {
     PlayerWon,
     Tie,
@@ -64,8 +70,7 @@ enum Response {
     AnnounceMove(u8),
     ShowHumanMatchOver(UserId, UserId, GameOverReason),
     ShowComputerMatchOver(bool, GameOverReason),
-    ErrorPlayerAlreadyPlaying(UserId),
-    ErrorPlayerNotPlaying(UserId),
+    ShowError(UserError)
 }
     
 
@@ -160,8 +165,23 @@ fn process_request(conn : &mut Connection, request: &Request) -> Vec<Response> {
                     panic!("The impossible has happened")
             }
         }
-        Request::PlayMove(_channel, _player_id, _move_no) => {
-            vec![]
+        Request::PlayMove(channel_id, player_id, move_no) => {
+            let found_match = 
+                persistency::retrieve_match_by_player(conn, channel_id.0, player_id.0);
+            match found_match {
+                Err(Error::NotCompleted(NotCompletedReason::PlayerHasNoMatches)) =>
+                    vec![Response::ShowError(UserError::PlayerNotPlaying(*player_id))],
+                    
+                Err(_) => {
+                    panic!("Unknown error retrieving match")
+                }
+                Ok(OngoingMatch::HumanMatch(human_match)) =>
+                    process_move_vs_human(conn, human_match, *player_id, *move_no),
+                    
+                Ok(OngoingMatch::ComputerMatch(computer_match)) =>
+                    process_move_vs_computer(conn, computer_match, *player_id, *move_no)
+            }
+
         }
         Request::RespondToInteraction(_player_id, _message_id, _move_no) => {
             vec![]
@@ -175,19 +195,25 @@ fn process_request(conn : &mut Connection, request: &Request) -> Vec<Response> {
     }
 }
 
+fn process_move_vs_human(conn : &Connection, human_match : persistency::HumanMatch, player_id : UserId, move_no : u8) -> Vec<Response> {
+    vec![]
+}
+
+fn process_move_vs_computer(conn : &Connection, computer_match : persistency::ComputerMatch, player_id : UserId, move_no : u8) -> Vec<Response> {
+    vec![]
+}
+
 fn challenge_bot_go_first(conn : &mut Connection, channel_id : &ChannelId, player_id : &UserId, ai_level : u8) -> Vec<Response> {
     let match_id_result = persistency::new_computer_match(conn, channel_id.0, player_id.0, true, ai_level);
     match match_id_result {
         Err(Error::NotCompleted(NotCompletedReason::PlayerAlreadyPlaying)) =>
-            vec![Response::ErrorPlayerAlreadyPlaying(*player_id)],
+            vec![Response::ShowError(UserError::PlayerAlreadyPlaying(*player_id))],
         Err(unknown_error) =>
             Err(unknown_error).expect("unknown error encountered"),
-        Ok(match_id) => {
-            let match_in_db = persistency::retrieve_match_by_player(conn, channel_id.0, player_id.0)
-                .expect("failed to found match that was put in DB just now!");
+        Ok(computer_match) => {
             vec![
                 Response::ShowBotChallengeMessage(*player_id), 
-                Response::ShowGame(match_in_db) ]
+                Response::ShowGame(OngoingMatch::ComputerMatch(computer_match)) ]
         }
     }
 }
@@ -196,36 +222,41 @@ fn challenge_bot_go_second(conn : &mut Connection, channel_id : &ChannelId, play
     let match_id_result = persistency::new_computer_match(conn, channel_id.0, player_id.0, false, ai_level);
     match match_id_result {
         Err(Error::NotCompleted(NotCompletedReason::PlayerAlreadyPlaying)) =>
-            vec![Response::ErrorPlayerAlreadyPlaying(*player_id)],
+            vec![Response::ShowError(UserError::PlayerAlreadyPlaying(*player_id))],
+            
         Err(unknown_error) =>
             Err(unknown_error).expect("unknown error encountered"),
-        Ok(match_id) => {
-            let mut match_in_db = persistency::retrieve_match_by_player(conn, channel_id.0, player_id.0)
-                .expect("failed to found match that was put in DB just now!");
             
-            let empty_game_state = match_in_db.clone();
+        Ok(initial_bot_match) => {
+            let mut bot_responses = play_bot_move(conn, &initial_bot_match);
             
-            let played_move = match &mut match_in_db {
-                OngoingMatch::ComputerMatch(computer_match) => {
-                    let suggested_move = 
-                        monte_carlo_ai::ai_move(
-                            &computer_match.board, 
-                            search_depth_at_level(computer_match.ai_level)
-                        ).expect("AI failure :(");
-                    computer_match.board.play_move(suggested_move);
-                    suggested_move
-                },
-                _ => 
-                    panic!("Found human match where computer match was expected")
-            };
-            
-            vec![
+            let mut responses = vec![
                 Response::ShowBotChallengeMessage(*player_id), 
-                Response::ShowGame(empty_game_state),
-                Response::AnnounceMove(played_move),
-                Response::ShowGame(match_in_db) ]
+                Response::ShowGame(OngoingMatch::ComputerMatch(initial_bot_match)) ];
+                
+            responses.append(&mut bot_responses);
+            responses
         }
     }
+}
+
+fn play_bot_move(conn : &Connection, bot_match : &persistency::ComputerMatch) -> Vec<Response> {
+    let mut bot_match_new = bot_match.clone();
+
+    let suggested_move = 
+        monte_carlo_ai::ai_move(
+            &bot_match_new.board, 
+            search_depth_at_level(bot_match_new.ai_level)
+        ).expect("AI failure :(");
+    bot_match_new.board.play_move(suggested_move);
+            
+    persistency::update_match_board(conn, bot_match_new.match_id, &bot_match_new.board)
+        .expect("DB error when updating match");
+
+
+    vec![
+        Response::AnnounceMove(suggested_move),
+        Response::ShowGame(OngoingMatch::ComputerMatch(bot_match_new)) ]
 }
 
 fn communicate_responses(conn : &mut Connection, discord : &Discord, channel_id : ChannelId, responses : &Vec<Response>) -> persistency::Result<()> {
@@ -251,9 +282,7 @@ fn communicate_response(conn : &mut Connection, discord : &Discord, channel_id :
             Ok(()),
         Response::ShowComputerMatchOver(_win, _game_over_reason) =>
             Ok(()),
-        Response::ErrorPlayerAlreadyPlaying(_user_id) =>
-            Ok(()),
-        Response::ErrorPlayerNotPlaying(_user_id) =>
+        Response::ShowError(_user_error) =>
             Ok(())
     }
 }
