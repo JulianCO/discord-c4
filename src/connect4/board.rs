@@ -28,25 +28,25 @@ const GAME_OVER_INDICATOR : u64 = 0x80000000000u64;
 const BOARD_HEIGHT : u8 = 6;
 const BOARD_WIDTH : u8 = 7;
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum Player {
     Red,
     Blue
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum Slot {
     Empty,
     Piece(Player)
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum GameResult {
     Winner(Player),
     Tie
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum GameStatus {
     Turn(Player),
     GameOver(GameResult)
@@ -67,7 +67,7 @@ pub enum GameStatus {
   or in both in the case of a tie.
 */
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub struct Board {
     red_pieces : u64,
     blue_pieces : u64

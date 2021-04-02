@@ -3,7 +3,10 @@ mod connect4;
 use self::connect4::board::Board;
 use self::connect4::monte_carlo_ai;
 use self::connect4::persistency;
-use self::connect4::persistency::OngoingMatch;
+use self::connect4::persistency::
+    { OngoingMatch
+    , Error
+    , NotCompletedReason };
 use rusqlite::Connection;
 use discord::Discord;
 use discord::model::
@@ -28,7 +31,7 @@ enum HelpTopic {
     Play
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 enum PlayOrder {
     GoFirst,
     GoSecond,
@@ -57,9 +60,12 @@ enum Response {
     ShowGame(OngoingMatch),
     ShowHelp(HelpTopic),
     ShowChallengeMessage(UserId, UserId),
+    ShowBotChallengeMessage(UserId),
+    AnnounceMove(u8),
     ShowHumanMatchOver(UserId, UserId, GameOverReason),
     ShowComputerMatchOver(bool, GameOverReason),
-    ErrorPlayerAlreadyPlaying(UserId)
+    ErrorPlayerAlreadyPlaying(UserId),
+    ErrorPlayerNotPlaying(UserId),
 }
     
 
@@ -145,20 +151,14 @@ fn process_request(conn : &mut Connection, request: &Request) -> Vec<Response> {
             vec![]
         }
         Request::ChallengeBot(channel_id, player_id, ai_level, play_order) => {
-            /*let new_match = 
-                match play_order {
-                    PlayOrder::GoFirst =>
-                        new_computer_match(conn, channel_id.0, player_id.0, true, ai_level),
-                    PlayOrder::GoSecond =>
-                        new_computer_match(conn, channel_id.0, player_id.0, false, ai_level),
-                    PlayOrder::Random = >
-                        new_computer_match(conn, channel_id.0, player_id.0, rand::random(), ai_level)
-                };
-            match new_match {
-                Ok(_) => {
-                    if let mut m = retrieve_match_by_player(conn, channel.id.0, player.id.0).expect("match should exist");*/
-            vec![]
-                    
+            match decide_random_order(*play_order) {
+                PlayOrder::GoFirst =>
+                    challenge_bot_go_first(conn, channel_id, player_id, *ai_level),
+                PlayOrder::GoSecond =>
+                    challenge_bot_go_second(conn, channel_id, player_id, *ai_level),
+                PlayOrder::Random =>
+                    panic!("The impossible has happened")
+            }
         }
         Request::PlayMove(_channel, _player_id, _move_no) => {
             vec![]
@@ -171,6 +171,59 @@ fn process_request(conn : &mut Connection, request: &Request) -> Vec<Response> {
         }
         Request::Resign(_channel, _player_id) => {
             vec![]
+        }
+    }
+}
+
+fn challenge_bot_go_first(conn : &mut Connection, channel_id : &ChannelId, player_id : &UserId, ai_level : u8) -> Vec<Response> {
+    let match_id_result = persistency::new_computer_match(conn, channel_id.0, player_id.0, true, ai_level);
+    match match_id_result {
+        Err(Error::NotCompleted(NotCompletedReason::PlayerAlreadyPlaying)) =>
+            vec![Response::ErrorPlayerAlreadyPlaying(*player_id)],
+        Err(unknown_error) =>
+            Err(unknown_error).expect("unknown error encountered"),
+        Ok(match_id) => {
+            let match_in_db = persistency::retrieve_match_by_player(conn, channel_id.0, player_id.0)
+                .expect("failed to found match that was put in DB just now!");
+            vec![
+                Response::ShowBotChallengeMessage(*player_id), 
+                Response::ShowGame(match_in_db) ]
+        }
+    }
+}
+
+fn challenge_bot_go_second(conn : &mut Connection, channel_id : &ChannelId, player_id : &UserId, ai_level : u8) -> Vec<Response> {
+    let match_id_result = persistency::new_computer_match(conn, channel_id.0, player_id.0, false, ai_level);
+    match match_id_result {
+        Err(Error::NotCompleted(NotCompletedReason::PlayerAlreadyPlaying)) =>
+            vec![Response::ErrorPlayerAlreadyPlaying(*player_id)],
+        Err(unknown_error) =>
+            Err(unknown_error).expect("unknown error encountered"),
+        Ok(match_id) => {
+            let mut match_in_db = persistency::retrieve_match_by_player(conn, channel_id.0, player_id.0)
+                .expect("failed to found match that was put in DB just now!");
+            
+            let empty_game_state = match_in_db.clone();
+            
+            let played_move = match &mut match_in_db {
+                OngoingMatch::ComputerMatch(computer_match) => {
+                    let suggested_move = 
+                        monte_carlo_ai::ai_move(
+                            &computer_match.board, 
+                            search_depth_at_level(computer_match.ai_level)
+                        ).expect("AI failure :(");
+                    computer_match.board.play_move(suggested_move);
+                    suggested_move
+                },
+                _ => 
+                    panic!("Found human match where computer match was expected")
+            };
+            
+            vec![
+                Response::ShowBotChallengeMessage(*player_id), 
+                Response::ShowGame(empty_game_state),
+                Response::AnnounceMove(played_move),
+                Response::ShowGame(match_in_db) ]
         }
     }
 }
@@ -190,16 +243,39 @@ fn communicate_response(conn : &mut Connection, discord : &Discord, channel_id :
             Ok(()),
         Response::ShowChallengeMessage(_challenger, _challenged) =>
             Ok(()),
+        Response::ShowBotChallengeMessage(_challenger) =>
+            Ok(()),
+        Response::AnnounceMove(_ai_move) =>
+            Ok(()),
         Response::ShowHumanMatchOver(_winner, _loser, _game_over_reason) =>
             Ok(()),
         Response::ShowComputerMatchOver(_win, _game_over_reason) =>
             Ok(()),
         Response::ErrorPlayerAlreadyPlaying(_user_id) =>
+            Ok(()),
+        Response::ErrorPlayerNotPlaying(_user_id) =>
             Ok(())
     }
 }
 
+fn decide_random_order(play_order : PlayOrder) -> PlayOrder {
+    match play_order {
+        PlayOrder::Random =>
+            if rand::random() {
+                PlayOrder::GoFirst
+            }
+            else {
+                PlayOrder::GoSecond
+            },
+        definite_order => 
+            definite_order
+    }
+}
 
+fn search_depth_at_level(ai_level : u8) -> u32 {
+    32768
+}
+        
 fn old_main() {
     let mut b = Board::empty_board();
     b.play_move(3);

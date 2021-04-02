@@ -5,7 +5,7 @@ use std::string::String;
 
 use crate::connect4::board::{Board, GameStatus, Player};
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum NotCompletedReason {
     RedAlreadyPlaying,
     BlueAlreadyPlaying,
@@ -23,7 +23,7 @@ pub enum Error {
     NotCompleted(NotCompletedReason)
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub struct HumanMatch { 
     pub match_id : u64,
     pub server_id : u64,
@@ -32,7 +32,7 @@ pub struct HumanMatch {
     pub board : Board
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub struct ComputerMatch { 
     pub match_id : u64,
     pub server_id : u64,
@@ -42,7 +42,7 @@ pub struct ComputerMatch {
     pub board : Board
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub enum OngoingMatch {
     HumanMatch(HumanMatch),
     ComputerMatch(ComputerMatch)
