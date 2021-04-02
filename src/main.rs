@@ -1,6 +1,6 @@
 mod connect4;
 
-use self::connect4::board::Board;
+use self::connect4::board::{Board, GameStatus, Player};
 use self::connect4::monte_carlo_ai;
 use self::connect4::persistency;
 use self::connect4::persistency::{Error, NotCompletedReason, OngoingMatch};
@@ -42,18 +42,22 @@ enum Request {
     Resign(ChannelId, UserId),
 }
 
+#[derive(Debug)]
 enum UserError {
-    PlayerAlreadyPlaying(UserId),
-    PlayerNotPlaying(UserId),
-    NotYourTurn(UserId),
+    PlayerAlreadyPlaying,
+    PlayerNotPlaying,
+    NotYourTurn,
+    IllegalMove,
 }
 
+#[derive(Debug)]
 enum GameOverReason {
     PlayerWon,
     Tie,
     Resignation,
 }
 
+#[derive(Debug)]
 enum Response {
     ShowGame(OngoingMatch),
     ShowHelp(HelpTopic),
@@ -62,7 +66,7 @@ enum Response {
     AnnounceMove(u8),
     ShowHumanMatchOver(UserId, UserId, GameOverReason),
     ShowComputerMatchOver(bool, GameOverReason),
-    ShowError(UserError),
+    ShowError(UserId, UserError),
 }
 
 fn main() {
@@ -85,6 +89,7 @@ fn main() {
                 let request = parse_request(&message, &bot_id);
                 println!("Understood request : {:?}", request);
                 let responses = process_request(&mut conn, &request);
+                println!("Replying with {:?}", responses);
                 communicate_responses(&mut conn, &discord, message.channel_id, &responses);
             }
             Ok(_) => {}
@@ -107,7 +112,7 @@ fn parse_request(message: &Message, bot_id: &UserId) -> Request {
                     Request::ChallengeBot(
                         message.channel_id,
                         message.author.id,
-                        0,
+                        5,
                         PlayOrder::Random,
                     )
                 } else {
@@ -168,7 +173,7 @@ fn process_request(conn: &mut Connection, request: &Request) -> Vec<Response> {
                 persistency::retrieve_match_by_player(conn, channel_id.0, player_id.0);
             match found_match {
                 Err(Error::NotCompleted(NotCompletedReason::PlayerHasNoMatches)) => {
-                    vec![Response::ShowError(UserError::PlayerNotPlaying(*player_id))]
+                    vec![Response::ShowError(*player_id, UserError::PlayerNotPlaying)]
                 }
 
                 Err(_) => {
@@ -179,7 +184,7 @@ fn process_request(conn: &mut Connection, request: &Request) -> Vec<Response> {
                 }
 
                 Ok(OngoingMatch::ComputerMatch(computer_match)) => {
-                    process_move_vs_computer(conn, computer_match, *player_id, *move_no)
+                    process_move_vs_computer(conn, computer_match, *move_no)
                 }
             }
         }
@@ -201,16 +206,39 @@ fn process_move_vs_human(
     player_id: UserId,
     move_no: u8,
 ) -> Vec<Response> {
+    println!("processing move vs human");
     vec![]
 }
 
 fn process_move_vs_computer(
     conn: &Connection,
-    computer_match: persistency::ComputerMatch,
-    player_id: UserId,
+    mut computer_match: persistency::ComputerMatch,
     move_no: u8,
 ) -> Vec<Response> {
-    vec![]
+    println!("processing move vs computer");
+    let turn_ok = match computer_match.board.game_status() {
+        GameStatus::Turn(Player::Red) =>
+            computer_match.player_is_red,
+        GameStatus::Turn(Player::Blue) =>
+            !computer_match.player_is_red,
+        _ => {
+            panic!("Request to play move in finished game!")
+        }
+    };
+    
+    if !turn_ok {
+        vec![Response::ShowError(UserId(computer_match.player_id), UserError::NotYourTurn)]
+    }
+    else {
+        computer_match.board.play_move(move_no);
+        
+        let mut bot_responses = play_bot_move(conn, &computer_match);
+        
+        let mut responses = vec![Response::ShowGame(OngoingMatch::ComputerMatch(computer_match))];
+        responses.append(&mut bot_responses);
+        
+        responses
+    }
 }
 
 fn challenge_bot_go_first(
@@ -223,9 +251,7 @@ fn challenge_bot_go_first(
         persistency::new_computer_match(conn, channel_id.0, player_id.0, true, ai_level);
     match match_id_result {
         Err(Error::NotCompleted(NotCompletedReason::PlayerAlreadyPlaying)) => {
-            vec![Response::ShowError(UserError::PlayerAlreadyPlaying(
-                *player_id,
-            ))]
+            vec![Response::ShowError(*player_id, UserError::PlayerAlreadyPlaying)]
         }
         Err(unknown_error) => Err(unknown_error).expect("unknown error encountered"),
         Ok(computer_match) => {
@@ -247,9 +273,7 @@ fn challenge_bot_go_second(
         persistency::new_computer_match(conn, channel_id.0, player_id.0, false, ai_level);
     match match_id_result {
         Err(Error::NotCompleted(NotCompletedReason::PlayerAlreadyPlaying)) => {
-            vec![Response::ShowError(UserError::PlayerAlreadyPlaying(
-                *player_id,
-            ))]
+            vec![Response::ShowError(*player_id, UserError::PlayerAlreadyPlaying)]
         }
 
         Err(unknown_error) => Err(unknown_error).expect("unknown error encountered"),
@@ -305,16 +329,37 @@ fn communicate_response(
     channel_id: ChannelId,
     response: &Response,
 ) -> persistency::Result<()> {
-    match response {
-        Response::ShowGame(_ongoing_match) => Ok(()),
-        Response::ShowHelp(_help_topic) => Ok(()),
-        Response::ShowChallengeMessage(_challenger, _challenged) => Ok(()),
-        Response::ShowBotChallengeMessage(_challenger) => Ok(()),
-        Response::AnnounceMove(_ai_move) => Ok(()),
-        Response::ShowHumanMatchOver(_winner, _loser, _game_over_reason) => Ok(()),
-        Response::ShowComputerMatchOver(_win, _game_over_reason) => Ok(()),
-        Response::ShowError(_user_error) => Ok(()),
-    }
+    let response_string = match response {
+        Response::ShowGame(ongoing_match) => {
+            let board = match &ongoing_match {
+                OngoingMatch::HumanMatch(h) => &h.board,
+                OngoingMatch::ComputerMatch(c) => &c.board
+            };
+            board.display(
+                "🔴️",
+                "🔵️",
+                "⚪️",
+                "",
+                "",
+                "\n",
+                "",
+            )
+        },
+        Response::ShowHelp(_help_topic) => String::from("help message"),
+        Response::ShowChallengeMessage(_challenger, _challenged) => String::from("challenge message"),
+        Response::ShowBotChallengeMessage(_challenger) => String::from("bot challenge message"),
+        Response::AnnounceMove(ai_move) => format!("I'm going to play in column {}", ai_move + 1),
+        Response::ShowHumanMatchOver(_winner, _loser, _game_over_reason) => String::from("a game has ended"),
+        Response::ShowComputerMatchOver(_win, _game_over_reason) => String::from("a game has ended"),
+        Response::ShowError(_user_id, _user_error) => String::from("an error has occured"),
+    };
+    let _ = discord.send_message(
+        channel_id,
+        &response_string,
+        "",
+        false,
+        );
+    Ok(())
 }
 
 fn decide_random_order(play_order: PlayOrder) -> PlayOrder {

@@ -116,7 +116,7 @@ char game_state_is_move_legal(const GameState *gs, int i) {
         if (i < 0 || i >= 7)
                 return 0;
         if (game_state_game_finished(gs)) 
-                return 1;
+                return 0;
         return gs->board[6*i + 5] == EMPTY;
 }
 
