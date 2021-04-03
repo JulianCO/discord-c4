@@ -77,6 +77,27 @@ impl OngoingMatch {
             OngoingMatch::ComputerMatch(c) => c.match_id,
         }
     }
+    
+    pub fn get_board(&self) -> &Board {
+        match self {
+            OngoingMatch::HumanMatch(h) => &h.board,
+            OngoingMatch::ComputerMatch(c) => &c.board,
+        }
+    }
+    
+    pub fn get_board_mut(&mut self) -> &mut Board {
+        match self {
+            OngoingMatch::HumanMatch(h) => &mut h.board,
+            OngoingMatch::ComputerMatch(c) => &mut c.board,
+        }
+    }
+    
+    pub fn get_server_id(&self) -> u64 {
+        match self {
+            OngoingMatch::HumanMatch(h) => h.server_id,
+            OngoingMatch::ComputerMatch(c) => c.server_id,
+        }
+    }
 }
 
 pub type Result<T, E = Error> = core::result::Result<T, E>;

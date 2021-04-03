@@ -3,3 +3,4 @@ Cargo.lock
 
 outtt
 test_generation/*
+*.sqlite
