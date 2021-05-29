@@ -62,11 +62,6 @@ enum GameOverReason {
 pub enum Response {
     ShowGame(OngoingMatch, bool),
     ShowHelp(HelpTopic),
-    ShowChallengeMessage(UserId, UserId),
-    ShowBotChallengeMessage(UserId),
-    AnnounceMove(u8),
-    ShowHumanMatchOver(UserId, UserId, GameOverReason),
-    ShowComputerMatchOver(UserId, bool, GameOverReason),
     ShowError(UserId, UserError),
 }
 
@@ -199,50 +194,22 @@ fn process_move_vs_human(
     } else {
         human_match.board.play_move(move_no);
 
-        let setup_interaction;
-        let mut result_responses = match human_match.board.game_status() {
-            GameStatus::GameOver(GameResult::Winner(Player::Red)) => {
+        let setup_interaction = match human_match.board.game_status() {
+            GameStatus::GameOver(_) => {
                 persistency::delete_match(conn, human_match.match_id);
-                setup_interaction = false;
-                vec![Response::ShowHumanMatchOver(
-                    UserId(human_match.red_player_id),
-                    UserId(human_match.blue_player_id),
-                    GameOverReason::PlayerWon,
-                )]
-            }
-            GameStatus::GameOver(GameResult::Winner(Player::Blue)) => {
-                persistency::delete_match(conn, human_match.match_id);
-                setup_interaction = false;
-                vec![Response::ShowHumanMatchOver(
-                    UserId(human_match.blue_player_id),
-                    UserId(human_match.red_player_id),
-                    GameOverReason::PlayerWon,
-                )]
-            }
-            GameStatus::GameOver(GameResult::Tie) => {
-                persistency::delete_match(conn, human_match.match_id);
-                setup_interaction = false;
-                vec![Response::ShowHumanMatchOver(
-                    UserId(human_match.red_player_id),
-                    UserId(human_match.blue_player_id),
-                    GameOverReason::Tie,
-                )]
+                false
             }
             GameStatus::Turn(_) => {
-                setup_interaction = true;
                 persistency::update_match_board(conn, human_match.match_id, &human_match.board)
                     .expect("Error updating game state");
-                vec![]
+                true
             }
         };
 
-        let mut responses = vec![Response::ShowGame(
+        vec![Response::ShowGame(
             OngoingMatch::HumanMatch(human_match),
             setup_interaction,
-        )];
-        responses.append(&mut result_responses);
-
-        responses
+        )]
     }
 }
 
@@ -262,21 +229,9 @@ fn process_move_vs_computer(
         computer_match.board.play_move(move_no);
 
         let mut bot_responses = match computer_match.board.game_status() {
-            GameStatus::GameOver(GameResult::Winner(_)) => {
+            GameStatus::GameOver(_) => {
                 persistency::delete_match(conn, computer_match.match_id);
-                vec![Response::ShowComputerMatchOver(
-                    player_id,
-                    true,
-                    GameOverReason::PlayerWon,
-                )]
-            }
-            GameStatus::GameOver(GameResult::Tie) => {
-                persistency::delete_match(conn, computer_match.match_id);
-                vec![Response::ShowComputerMatchOver(
-                    player_id,
-                    true,
-                    GameOverReason::Tie,
-                )]
+                vec![]
             }
             GameStatus::Turn(_) => play_bot_move(conn, &computer_match),
         };
@@ -333,7 +288,6 @@ fn challenge_human(
         Err(unknown_error) => Err(unknown_error).expect("unknown error encountered"),
         Ok(human_match) => {
             vec![
-                Response::ShowChallengeMessage(*challenger, *challenged),
                 Response::ShowGame(OngoingMatch::HumanMatch(human_match), true),
             ]
         }
@@ -358,7 +312,6 @@ fn challenge_bot_go_first(
         Err(unknown_error) => Err(unknown_error).expect("unknown error encountered"),
         Ok(computer_match) => {
             vec![
-                Response::ShowBotChallengeMessage(*player_id),
                 Response::ShowGame(OngoingMatch::ComputerMatch(computer_match), true),
             ]
         }
@@ -387,7 +340,6 @@ fn challenge_bot_go_second(
             let mut bot_responses = play_bot_move(conn, &initial_bot_match);
 
             let mut responses = vec![
-                Response::ShowBotChallengeMessage(*player_id),
                 Response::ShowGame(OngoingMatch::ComputerMatch(initial_bot_match), false),
             ];
 
@@ -408,35 +360,16 @@ fn play_bot_move(conn: &Connection, bot_match: &persistency::ComputerMatch) -> V
     bot_match_new.board.play_move(suggested_move);
 
     let responses = match bot_match_new.board.game_status() {
-        GameStatus::GameOver(GameResult::Winner(_)) => {
+        GameStatus::GameOver(_) => {
             persistency::delete_match(conn, bot_match.match_id);
             vec![
-                Response::AnnounceMove(suggested_move),
-                Response::ShowGame(OngoingMatch::ComputerMatch(bot_match_new), false),
-                Response::ShowComputerMatchOver(
-                    UserId(bot_match.player_id),
-                    false,
-                    GameOverReason::PlayerWon,
-                ),
-            ]
-        }
-        GameStatus::GameOver(GameResult::Tie) => {
-            persistency::delete_match(conn, bot_match.match_id);
-            vec![
-                Response::AnnounceMove(suggested_move),
-                Response::ShowGame(OngoingMatch::ComputerMatch(bot_match_new), false),
-                Response::ShowComputerMatchOver(
-                    UserId(bot_match.player_id),
-                    true,
-                    GameOverReason::Tie,
-                ),
+                Response::ShowGame(OngoingMatch::ComputerMatch(bot_match_new), false)
             ]
         }
         GameStatus::Turn(_) => {
             persistency::update_match_board(conn, bot_match_new.match_id, &bot_match_new.board)
                 .expect("DB error when updating match");
             vec![
-                Response::AnnounceMove(suggested_move),
                 Response::ShowGame(OngoingMatch::ComputerMatch(bot_match_new), true),
             ]
         }
@@ -462,60 +395,52 @@ pub fn communicate_response(
     channel_id: ChannelId,
     response: &Response,
 ) {
-    let response_string = match &response {
-        Response::ShowGame(ongoing_match, prompt_player) => {
-            let board = match ongoing_match {
-                OngoingMatch::HumanMatch(h) => &h.board,
-                OngoingMatch::ComputerMatch(c) => &c.board,
-            };
-
-            let mut board_string = board.display(
-                ":red_circle:",
-                ":blue_circle:",
-                ":white_circle:",
-                "",
-                "",
-                "\n",
-                "",
-            );
-
-            board_string.push_str(":one::two::three::four::five::six::seven:");
-
-            board_string
-        }
-        Response::ShowHelp(_help_topic) => String::from("help message"),
-        Response::ShowChallengeMessage(_challenger, _challenged) => {
-            String::from("challenge message")
-        }
-        Response::ShowBotChallengeMessage(_challenger) => String::from("bot challenge message"),
-        Response::AnnounceMove(ai_move) => format!(
-            "I'm going to play in column {}",
-            COLUMN_EMOJI[*ai_move as usize]
-        ),
-        Response::ShowHumanMatchOver(_winner, _loser, _game_over_reason) => {
-            String::from("a game has ended")
-        }
-        Response::ShowComputerMatchOver(_player, _win, _game_over_reason) => {
-            String::from("a game has ended")
-        }
-        Response::ShowError(_user_id, _user_error) => String::from("an error has occured"),
+    match response {
+        Response::ShowGame(ongoing_match, prompt_player) => show_game(conn, discord, channel_id, ongoing_match, *prompt_player),
+        Response::ShowHelp(_help_topic) => show_help(conn, discord, channel_id),
+        Response::ShowError(user_id, user_error) => show_error(conn, discord, channel_id, user_id, user_error)
     };
+}
 
-    let message = match response {
-        Response::ShowGame(ongoing_match, _) => match ongoing_match.get_message_id() {
+fn show_game(
+    conn: &mut Connection,
+    discord: &Discord,
+    channel_id: ChannelId,
+    ongoing_match : &OngoingMatch, 
+    prompt_player: bool,
+) {
+    let response_string = {
+        let board = match ongoing_match {
+            OngoingMatch::HumanMatch(h) => &h.board,
+            OngoingMatch::ComputerMatch(c) => &c.board,
+        };
+
+        let mut board_string = board.display(
+            ":red_circle:",
+            ":blue_circle:",
+            ":white_circle:",
+            "",
+            "",
+            "\n",
+            "",
+        );
+
+        board_string.push_str(":one::two::three::four::five::six::seven:");
+
+        board_string
+    };
+    
+    let message = 
+        match ongoing_match.get_message_id() {
             Some(message_id) => discord
                 .edit_message(channel_id, MessageId(message_id), &response_string)
                 .expect("failed to edit message"),
             None => discord
                 .send_message(channel_id, &response_string, "", false)
                 .expect("failed to send message"),
-        },
-        _ => discord
-            .send_message(channel_id, &response_string, "", false)
-            .expect("failed to send message"),
-    };
-
-    if let Response::ShowGame(ongoing_match, true) = response {
+        };
+    
+    if prompt_player {
         for (i, emoji) in COLUMN_EMOJI.iter().enumerate() {
             if ongoing_match.get_board().is_move_legal(i as u8) {
                 println!("attempting to react with {}", emoji);
@@ -531,6 +456,29 @@ pub fn communicate_response(
         }
         persistency::register_interaction(conn, message.id.0, &ongoing_match);
     }
+}
+
+fn show_help(
+    conn: &mut Connection,
+    discord: &Discord,
+    channel_id: ChannelId,
+) {
+    discord
+        .send_message(channel_id, "Help message", "", false)
+        .expect("failed to send message");
+}
+
+
+fn show_error(
+    conn: &mut Connection,
+    discord: &Discord,
+    channel_id: ChannelId,
+    user_id : &UserId, 
+    user_error: &UserError, 
+) {
+    discord
+        .send_message(channel_id, "Help message", "", false)
+        .expect("failed to send message");
 }
 
 fn check_player_turn_vs_bot(
