@@ -30,6 +30,7 @@ pub struct HumanMatch {
     pub red_player_id: u64,
     pub blue_player_id: u64,
     pub board: Board,
+    pub message_id: Option<u64>
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -40,6 +41,7 @@ pub struct ComputerMatch {
     pub player_is_red: bool,
     pub ai_level: u8,
     pub board: Board,
+    pub message_id: Option<u64>
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -62,6 +64,7 @@ struct DatabaseRow {
     blue_player_id: i64,
     red_pieces: i64,
     blue_pieces: i64,
+    message_id: Option<i64>
 }
 
 impl From<rusqlite::Error> for Error {
@@ -112,7 +115,8 @@ pub fn initialize(db_name: &str) -> Result<Connection> {
             red_player_id INTEGER NOT NULL,
             blue_player_id INTEGER NOT NULL,
             red_pieces INTEGER NOT NULL,
-            blue_pieces INTEGER NOT NULL
+            blue_pieces INTEGER NOT NULL,
+            message_id INTEGER
             );",
         params![],
     )?;
@@ -201,6 +205,7 @@ pub fn new_human_match(
             red_player_id: red_id,
             blue_player_id: blue_id,
             board: e,
+            message_id: None
         })
     } else {
         Err(Error::NotCompleted(NotCompletedReason::UnrecoverableError))
@@ -287,6 +292,7 @@ pub fn new_computer_match(
         player_is_red,
         ai_level,
         board: e,
+        message_id: None
     })
 }
 
@@ -300,6 +306,7 @@ fn data_row_to_match(row: &DatabaseRow) -> OngoingMatch {
             player_is_red: false,
             ai_level: (-row.red_player_id) as u8,
             board,
+            message_id: row.message_id.map(|x| x as u64),
         })
     } else if row.blue_player_id < 0 && row.blue_player_id > -10 {
         OngoingMatch::ComputerMatch(ComputerMatch {
@@ -309,6 +316,7 @@ fn data_row_to_match(row: &DatabaseRow) -> OngoingMatch {
             player_is_red: true,
             ai_level: (-row.blue_player_id) as u8,
             board,
+            message_id: row.message_id.map(|x| x as u64),
         })
     } else {
         OngoingMatch::HumanMatch(HumanMatch {
@@ -317,6 +325,7 @@ fn data_row_to_match(row: &DatabaseRow) -> OngoingMatch {
             red_player_id: row.red_player_id as u64,
             blue_player_id: row.blue_player_id as u64,
             board,
+            message_id: row.message_id.map(|x| x as u64),
         })
     }
 }
@@ -328,7 +337,7 @@ pub fn retrieve_match_by_player(
 ) -> Result<OngoingMatch> {
     let corresponding_row_opt = conn
         .query_row(
-            "SELECT match_id, red_player_id, blue_player_id, red_pieces, blue_pieces
+            "SELECT match_id, red_player_id, blue_player_id, red_pieces, blue_pieces, message_id
             FROM matches 
             WHERE server_id=?1
             AND (red_player_id=?2 OR blue_player_id=?2)
@@ -342,6 +351,7 @@ pub fn retrieve_match_by_player(
                     blue_player_id: row.get(2)?,
                     red_pieces: row.get(3)?,
                     blue_pieces: row.get(4)?,
+                    message_id: row.get(5)?,
                 })
             },
         )
@@ -355,7 +365,7 @@ pub fn retrieve_match_by_player(
 pub fn retrieve_match_by_id(conn: &Connection, match_id: u64) -> Result<OngoingMatch> {
     let corresponding_row_opt = conn
         .query_row(
-            "SELECT match_id, server_id, red_player_id, blue_player_id, red_pieces, blue_pieces
+            "SELECT match_id, server_id, red_player_id, blue_player_id, red_pieces, blue_pieces, message_id
             FROM matches 
             WHERE match_id = ?1
             ;",
@@ -368,6 +378,7 @@ pub fn retrieve_match_by_id(conn: &Connection, match_id: u64) -> Result<OngoingM
                     blue_player_id: row.get(3)?,
                     red_pieces: row.get(4)?,
                     blue_pieces: row.get(5)?,
+                    message_id: row.get(6)?,
                 })
             },
         )
@@ -471,6 +482,13 @@ pub fn register_interaction(
             ongoing_match.get_id() as i64,
             player_id as i64
         ],
+    )?;
+    
+    conn.execute(
+        "UPDATE matches
+            SET message_id = ?1
+            WHERE match_id = ?2",
+        params![Some(message_id as i64), ongoing_match.get_id() as i64],
     )?;
 
     Ok(())
