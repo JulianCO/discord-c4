@@ -30,7 +30,7 @@ pub struct HumanMatch {
     pub red_player_id: u64,
     pub blue_player_id: u64,
     pub board: Board,
-    pub message_id: Option<u64>
+    pub message_id: Option<u64>,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -41,7 +41,7 @@ pub struct ComputerMatch {
     pub player_is_red: bool,
     pub ai_level: u8,
     pub board: Board,
-    pub message_id: Option<u64>
+    pub message_id: Option<u64>,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -64,7 +64,7 @@ struct DatabaseRow {
     blue_player_id: i64,
     red_pieces: i64,
     blue_pieces: i64,
-    message_id: Option<i64>
+    message_id: Option<i64>,
 }
 
 impl From<rusqlite::Error> for Error {
@@ -80,25 +80,32 @@ impl OngoingMatch {
             OngoingMatch::ComputerMatch(c) => c.match_id,
         }
     }
-    
+
     pub fn get_board(&self) -> &Board {
         match self {
             OngoingMatch::HumanMatch(h) => &h.board,
             OngoingMatch::ComputerMatch(c) => &c.board,
         }
     }
-    
+
     pub fn get_board_mut(&mut self) -> &mut Board {
         match self {
             OngoingMatch::HumanMatch(h) => &mut h.board,
             OngoingMatch::ComputerMatch(c) => &mut c.board,
         }
     }
-    
+
     pub fn get_server_id(&self) -> u64 {
         match self {
             OngoingMatch::HumanMatch(h) => h.server_id,
             OngoingMatch::ComputerMatch(c) => c.server_id,
+        }
+    }
+
+    pub fn get_message_id(&self) -> Option<u64> {
+        match self {
+            OngoingMatch::HumanMatch(h) => h.message_id,
+            OngoingMatch::ComputerMatch(c) => c.message_id,
         }
     }
 }
@@ -205,7 +212,7 @@ pub fn new_human_match(
             red_player_id: red_id,
             blue_player_id: blue_id,
             board: e,
-            message_id: None
+            message_id: None,
         })
     } else {
         Err(Error::NotCompleted(NotCompletedReason::UnrecoverableError))
@@ -292,7 +299,7 @@ pub fn new_computer_match(
         player_is_red,
         ai_level,
         board: e,
-        message_id: None
+        message_id: None,
     })
 }
 
@@ -483,7 +490,7 @@ pub fn register_interaction(
             player_id as i64
         ],
     )?;
-    
+
     conn.execute(
         "UPDATE matches
             SET message_id = ?1
