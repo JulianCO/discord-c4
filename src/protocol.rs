@@ -14,7 +14,7 @@ use std::str::FromStr;
 
 pub const COLUMN_EMOJI: [&str; 7] = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣"];
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 pub struct MatchId(pub u64);
 
 #[derive(Debug, PartialEq, Clone, Copy)]
@@ -63,6 +63,7 @@ pub enum Response {
     ShowGame(OngoingMatch, bool),
     ShowHelp(HelpTopic),
     ShowError(UserId, UserError),
+    BotPlaysMove(MatchId),
 }
 
 pub fn parse_request(message: &Message, bot_id: &UserId) -> Request {
@@ -227,13 +228,15 @@ fn process_move_vs_computer(
         vec![Response::ShowError(player_id, UserError::IllegalMove)]
     } else {
         computer_match.board.play_move(move_no);
+        
+        persistency::update_match_board(conn, computer_match.match_id, &computer_match.board);
 
         let mut bot_responses = match computer_match.board.game_status() {
             GameStatus::GameOver(_) => {
                 persistency::delete_match(conn, computer_match.match_id);
                 vec![]
             }
-            GameStatus::Turn(_) => play_bot_move(conn, &computer_match),
+            GameStatus::Turn(_) => vec![Response::BotPlaysMove(MatchId(computer_match.match_id))],
         };
 
         let mut responses = vec![Response::ShowGame(
@@ -336,22 +339,25 @@ fn challenge_bot_go_second(
 
         Err(unknown_error) => Err(unknown_error).expect("unknown error encountered"),
 
-        Ok(initial_bot_match) => {
-            let mut bot_responses = play_bot_move(conn, &initial_bot_match);
-
-            let mut responses = vec![
-                Response::ShowGame(OngoingMatch::ComputerMatch(initial_bot_match), false),
-            ];
-
-            responses.append(&mut bot_responses);
-            responses
+        Ok(initial_bot_match) => {    
+            let match_id = initial_bot_match.match_id;
+            vec![
+                Response::ShowGame(OngoingMatch::ComputerMatch(initial_bot_match), true),
+                Response::BotPlaysMove(MatchId(match_id)),
+            ]
         }
     }
 }
 
-fn play_bot_move(conn: &Connection, bot_match: &persistency::ComputerMatch) -> Vec<Response> {
-    let mut bot_match_new = bot_match.clone();
+fn play_bot_move(conn: &Connection, match_id: MatchId) -> Vec<Response> {
+    let mut match_new = persistency::retrieve_match_by_id(conn, match_id.0).expect("bot tried to play move in match with invalid id");
 
+    let mut bot_match_new =
+        match match_new {
+            OngoingMatch::HumanMatch(_) => panic!("bot tried to play move in human match"),
+            OngoingMatch::ComputerMatch(c) => c,
+        };
+    
     let suggested_move = monte_carlo_ai::ai_move(
         &bot_match_new.board,
         search_depth_at_level(bot_match_new.ai_level),
@@ -361,7 +367,7 @@ fn play_bot_move(conn: &Connection, bot_match: &persistency::ComputerMatch) -> V
 
     let responses = match bot_match_new.board.game_status() {
         GameStatus::GameOver(_) => {
-            persistency::delete_match(conn, bot_match.match_id);
+            persistency::delete_match(conn, match_id.0);
             vec![
                 Response::ShowGame(OngoingMatch::ComputerMatch(bot_match_new), false)
             ]
@@ -398,7 +404,10 @@ pub fn communicate_response(
     match response {
         Response::ShowGame(ongoing_match, prompt_player) => show_game(conn, discord, channel_id, ongoing_match, *prompt_player),
         Response::ShowHelp(_help_topic) => show_help(conn, discord, channel_id),
-        Response::ShowError(user_id, user_error) => show_error(conn, discord, channel_id, user_id, user_error)
+        Response::ShowError(user_id, user_error) => show_error(conn, discord, channel_id, user_id, user_error),
+        Response::BotPlaysMove(match_id) => {
+            communicate_responses(conn, discord, channel_id, &play_bot_move(conn, *match_id));
+        },
     };
 }
 
