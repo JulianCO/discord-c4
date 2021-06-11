@@ -60,7 +60,7 @@ enum GameOverReason {
 
 #[derive(Debug)]
 pub enum Response {
-    ShowGame(OngoingMatch, bool),
+    ShowGame(OngoingMatch, bool, Option<u8>),
     ShowHelp(HelpTopic),
     ShowError(UserId, UserError),
     BotPlaysMove(MatchId),
@@ -210,6 +210,7 @@ fn process_move_vs_human(
         vec![Response::ShowGame(
             OngoingMatch::HumanMatch(human_match),
             setup_interaction,
+            Some(move_no)
         )]
     }
 }
@@ -242,6 +243,7 @@ fn process_move_vs_computer(
         let mut responses = vec![Response::ShowGame(
             OngoingMatch::ComputerMatch(computer_match),
             false,
+            Some(move_no)
         )];
         responses.append(&mut bot_responses);
 
@@ -291,7 +293,7 @@ fn challenge_human(
         Err(unknown_error) => Err(unknown_error).expect("unknown error encountered"),
         Ok(human_match) => {
             vec![
-                Response::ShowGame(OngoingMatch::HumanMatch(human_match), true),
+                Response::ShowGame(OngoingMatch::HumanMatch(human_match), true, None),
             ]
         }
     }
@@ -315,7 +317,7 @@ fn challenge_bot_go_first(
         Err(unknown_error) => Err(unknown_error).expect("unknown error encountered"),
         Ok(computer_match) => {
             vec![
-                Response::ShowGame(OngoingMatch::ComputerMatch(computer_match), true),
+                Response::ShowGame(OngoingMatch::ComputerMatch(computer_match), true, None),
             ]
         }
     }
@@ -342,7 +344,7 @@ fn challenge_bot_go_second(
         Ok(initial_bot_match) => {    
             let match_id = initial_bot_match.match_id;
             vec![
-                Response::ShowGame(OngoingMatch::ComputerMatch(initial_bot_match), true),
+                Response::ShowGame(OngoingMatch::ComputerMatch(initial_bot_match), true, None),
                 Response::BotPlaysMove(MatchId(match_id)),
             ]
         }
@@ -369,14 +371,14 @@ fn play_bot_move(conn: &Connection, match_id: MatchId) -> Vec<Response> {
         GameStatus::GameOver(_) => {
             persistency::delete_match(conn, match_id.0);
             vec![
-                Response::ShowGame(OngoingMatch::ComputerMatch(bot_match_new), false)
+                Response::ShowGame(OngoingMatch::ComputerMatch(bot_match_new), false, Some(suggested_move))
             ]
         }
         GameStatus::Turn(_) => {
             persistency::update_match_board(conn, bot_match_new.match_id, &bot_match_new.board)
                 .expect("DB error when updating match");
             vec![
-                Response::ShowGame(OngoingMatch::ComputerMatch(bot_match_new), true),
+                Response::ShowGame(OngoingMatch::ComputerMatch(bot_match_new), true, Some(suggested_move)),
             ]
         }
     };
@@ -402,7 +404,7 @@ pub fn communicate_response(
     response: &Response,
 ) {
     match response {
-        Response::ShowGame(ongoing_match, prompt_player) => show_game(conn, discord, channel_id, ongoing_match, *prompt_player),
+        Response::ShowGame(ongoing_match, prompt_player, _last_move) => show_game(conn, discord, channel_id, ongoing_match, *prompt_player),
         Response::ShowHelp(_help_topic) => show_help(conn, discord, channel_id),
         Response::ShowError(user_id, user_error) => show_error(conn, discord, channel_id, user_id, user_error),
         Response::BotPlaysMove(match_id) => {
