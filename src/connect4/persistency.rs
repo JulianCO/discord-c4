@@ -1,7 +1,6 @@
 use rusqlite::params;
 use rusqlite::Connection;
 use rusqlite::OptionalExtension;
-use std::string::String;
 
 use crate::connect4::board::{Board, GameStatus, Player};
 
@@ -48,13 +47,6 @@ pub struct ComputerMatch {
 pub enum OngoingMatch {
     HumanMatch(HumanMatch),
     ComputerMatch(ComputerMatch),
-}
-
-pub struct PendingInteraction {
-    interaction_id: u64,
-    match_id: u64,
-    message_id: u64,
-    player_id: u64,
 }
 
 struct DatabaseRow {

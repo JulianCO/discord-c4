@@ -3,16 +3,15 @@ mod protocol;
 
 use connect4::persistency;
 
-use discord::model::{ChannelId, Event, Message, MessageId, ReactionEmoji, UserId};
+use discord::model::{Event, ReactionEmoji};
 use discord::Discord;
 
 use std::env;
 
-use protocol::{Request};
+use protocol::Request;
 use protocol::COLUMN_EMOJI;
 
-// invite through https://discord.com/api/oauth2/authorize?client_id=805143667392118794&scope=bot&permissions=3136
-
+// invite through https://discord.com/api/oauth2/authorize?client_id=805143667392118794&scope=bot&permissions=75840
 
 fn main() {
     let discord = Discord::from_bot_token(
@@ -35,29 +34,36 @@ fn main() {
                 println!("Understood request : {:?}", request);
                 let responses = protocol::process_request(&mut conn, &request);
                 println!("Replying with {:?}", responses);
-                protocol::communicate_responses(&mut conn, &discord, message.channel_id, &responses);
+                protocol::communicate_responses(
+                    &mut conn,
+                    &discord,
+                    message.channel_id,
+                    &responses,
+                );
             }
             Ok(Event::ReactionAdd(reaction)) => {
-                match &reaction.emoji {
-                    ReactionEmoji::Custom { .. } => {}
-                    ReactionEmoji::Unicode(u) => {
-                        // println!("Unicode reaction added: {}", u);
-                        for (i, emoji) in COLUMN_EMOJI.iter().enumerate() {
-                            if u == emoji {
-                                let responses = protocol::process_request(
-                                    &mut conn,
-                                    &Request::RespondToInteraction(
-                                        reaction.user_id,
-                                        reaction.message_id,
-                                        i as u8,
-                                    ),
-                                );
-                                protocol::communicate_responses(
-                                    &mut conn,
-                                    &discord,
-                                    reaction.channel_id,
-                                    &responses,
-                                );
+                if reaction.user_id.0 != bot_id.0 {
+                    match &reaction.emoji {
+                        ReactionEmoji::Custom { .. } => {}
+                        ReactionEmoji::Unicode(u) => {
+                            // println!("Unicode reaction added: {}", u);
+                            for (i, emoji) in COLUMN_EMOJI.iter().enumerate() {
+                                if u == emoji {
+                                    let responses = protocol::process_request(
+                                        &mut conn,
+                                        &Request::RespondToInteraction(
+                                            reaction.user_id,
+                                            reaction.message_id,
+                                            i as u8,
+                                        ),
+                                    );
+                                    protocol::communicate_responses(
+                                        &mut conn,
+                                        &discord,
+                                        reaction.channel_id,
+                                        &responses,
+                                    );
+                                }
                             }
                         }
                     }
@@ -72,6 +78,3 @@ fn main() {
         }
     }
 }
-
-
-

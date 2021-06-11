@@ -3,7 +3,8 @@ use crate::connect4::monte_carlo_ai;
 use crate::connect4::persistency;
 use crate::connect4::persistency::{Error, NotCompletedReason, OngoingMatch};
 
-use discord::model::{ChannelId, Event, Message, MessageId, ReactionEmoji, UserId};
+use discord::builders::{EmbedBuilder, EmbedFieldsBuilder};
+use discord::model::{Channel, ChannelId, Message, MessageId, ReactionEmoji, UserId};
 use discord::Discord;
 
 use rusqlite::Connection;
@@ -18,14 +19,14 @@ pub const COLUMN_EMOJI: [&str; 7] = ["1️⃣", "2️⃣", "3️⃣", "4️⃣",
 pub struct MatchId(pub u64);
 
 #[derive(Debug, PartialEq, Clone, Copy)]
-enum HelpTopic {
+pub enum HelpTopic {
     General,
     Challenge,
     Play,
 }
 
 #[derive(Debug, PartialEq, Clone, Copy)]
-enum PlayOrder {
+pub enum PlayOrder {
     GoFirst,
     GoSecond,
     Random,
@@ -44,18 +45,11 @@ pub enum Request {
 }
 
 #[derive(Debug)]
-enum UserError {
+pub enum UserError {
     PlayerAlreadyPlaying,
     PlayerNotPlaying,
     NotYourTurn,
     IllegalMove,
-}
-
-#[derive(Debug)]
-enum GameOverReason {
-    PlayerWon,
-    Tie,
-    Resignation,
 }
 
 #[derive(Debug)]
@@ -210,7 +204,7 @@ fn process_move_vs_human(
         vec![Response::ShowGame(
             OngoingMatch::HumanMatch(human_match),
             setup_interaction,
-            Some(move_no)
+            Some(move_no),
         )]
     }
 }
@@ -229,7 +223,7 @@ fn process_move_vs_computer(
         vec![Response::ShowError(player_id, UserError::IllegalMove)]
     } else {
         computer_match.board.play_move(move_no);
-        
+
         persistency::update_match_board(conn, computer_match.match_id, &computer_match.board);
 
         let mut bot_responses = match computer_match.board.game_status() {
@@ -242,8 +236,8 @@ fn process_move_vs_computer(
 
         let mut responses = vec![Response::ShowGame(
             OngoingMatch::ComputerMatch(computer_match),
-            false,
-            Some(move_no)
+            true,
+            Some(move_no),
         )];
         responses.append(&mut bot_responses);
 
@@ -292,9 +286,11 @@ fn challenge_human(
         }
         Err(unknown_error) => Err(unknown_error).expect("unknown error encountered"),
         Ok(human_match) => {
-            vec![
-                Response::ShowGame(OngoingMatch::HumanMatch(human_match), true, None),
-            ]
+            vec![Response::ShowGame(
+                OngoingMatch::HumanMatch(human_match),
+                true,
+                None,
+            )]
         }
     }
 }
@@ -316,9 +312,11 @@ fn challenge_bot_go_first(
         }
         Err(unknown_error) => Err(unknown_error).expect("unknown error encountered"),
         Ok(computer_match) => {
-            vec![
-                Response::ShowGame(OngoingMatch::ComputerMatch(computer_match), true, None),
-            ]
+            vec![Response::ShowGame(
+                OngoingMatch::ComputerMatch(computer_match),
+                true,
+                None,
+            )]
         }
     }
 }
@@ -341,7 +339,7 @@ fn challenge_bot_go_second(
 
         Err(unknown_error) => Err(unknown_error).expect("unknown error encountered"),
 
-        Ok(initial_bot_match) => {    
+        Ok(initial_bot_match) => {
             let match_id = initial_bot_match.match_id;
             vec![
                 Response::ShowGame(OngoingMatch::ComputerMatch(initial_bot_match), true, None),
@@ -352,14 +350,14 @@ fn challenge_bot_go_second(
 }
 
 fn play_bot_move(conn: &Connection, match_id: MatchId) -> Vec<Response> {
-    let mut match_new = persistency::retrieve_match_by_id(conn, match_id.0).expect("bot tried to play move in match with invalid id");
+    let mut match_new = persistency::retrieve_match_by_id(conn, match_id.0)
+        .expect("bot tried to play move in match with invalid id");
 
-    let mut bot_match_new =
-        match match_new {
-            OngoingMatch::HumanMatch(_) => panic!("bot tried to play move in human match"),
-            OngoingMatch::ComputerMatch(c) => c,
-        };
-    
+    let mut bot_match_new = match match_new {
+        OngoingMatch::HumanMatch(_) => panic!("bot tried to play move in human match"),
+        OngoingMatch::ComputerMatch(c) => c,
+    };
+
     let suggested_move = monte_carlo_ai::ai_move(
         &bot_match_new.board,
         search_depth_at_level(bot_match_new.ai_level),
@@ -370,16 +368,20 @@ fn play_bot_move(conn: &Connection, match_id: MatchId) -> Vec<Response> {
     let responses = match bot_match_new.board.game_status() {
         GameStatus::GameOver(_) => {
             persistency::delete_match(conn, match_id.0);
-            vec![
-                Response::ShowGame(OngoingMatch::ComputerMatch(bot_match_new), false, Some(suggested_move))
-            ]
+            vec![Response::ShowGame(
+                OngoingMatch::ComputerMatch(bot_match_new),
+                true,
+                Some(suggested_move),
+            )]
         }
         GameStatus::Turn(_) => {
             persistency::update_match_board(conn, bot_match_new.match_id, &bot_match_new.board)
                 .expect("DB error when updating match");
-            vec![
-                Response::ShowGame(OngoingMatch::ComputerMatch(bot_match_new), true, Some(suggested_move)),
-            ]
+            vec![Response::ShowGame(
+                OngoingMatch::ComputerMatch(bot_match_new),
+                true,
+                Some(suggested_move),
+            )]
         }
     };
 
@@ -404,12 +406,21 @@ pub fn communicate_response(
     response: &Response,
 ) {
     match response {
-        Response::ShowGame(ongoing_match, prompt_player, _last_move) => show_game(conn, discord, channel_id, ongoing_match, *prompt_player),
+        Response::ShowGame(ongoing_match, prompt_player, last_move) => show_game(
+            conn,
+            discord,
+            channel_id,
+            ongoing_match,
+            *prompt_player,
+            *last_move,
+        ),
         Response::ShowHelp(_help_topic) => show_help(conn, discord, channel_id),
-        Response::ShowError(user_id, user_error) => show_error(conn, discord, channel_id, user_id, user_error),
+        Response::ShowError(user_id, user_error) => {
+            show_error(conn, discord, channel_id, user_id, user_error)
+        }
         Response::BotPlaysMove(match_id) => {
             communicate_responses(conn, discord, channel_id, &play_bot_move(conn, *match_id));
-        },
+        }
     };
 }
 
@@ -417,75 +428,199 @@ fn show_game(
     conn: &mut Connection,
     discord: &Discord,
     channel_id: ChannelId,
-    ongoing_match : &OngoingMatch, 
+    ongoing_match: &OngoingMatch,
     prompt_player: bool,
+    last_move: Option<u8>,
 ) {
-    let response_string = {
-        let board = match ongoing_match {
-            OngoingMatch::HumanMatch(h) => &h.board,
-            OngoingMatch::ComputerMatch(c) => &c.board,
-        };
-
-        let mut board_string = board.display(
-            ":red_circle:",
-            ":blue_circle:",
-            ":white_circle:",
-            "",
-            "",
-            "\n",
-            "",
-        );
-
-        board_string.push_str(":one::two::three::four::five::six::seven:");
-
-        board_string
+    let server_id = match discord
+        .get_channel(channel_id)
+        .expect("failed to find channel")
+    {
+        Channel::Public(public_channel) => public_channel.server_id,
+        _ => panic!("game being played in a private chat"),
     };
-    
-    let message = 
-        match ongoing_match.get_message_id() {
-            Some(message_id) => discord
-                .edit_message(channel_id, MessageId(message_id), &response_string)
-                .expect("failed to edit message"),
-            None => discord
-                .send_message(channel_id, &response_string, "", false)
-                .expect("failed to send message"),
-        };
-    
-    if prompt_player {
-        for (i, emoji) in COLUMN_EMOJI.iter().enumerate() {
-            if ongoing_match.get_board().is_move_legal(i as u8) {
-                println!("attempting to react with {}", emoji);
-                match discord.add_reaction(
-                    channel_id,
-                    message.id,
-                    ReactionEmoji::Unicode(emoji.to_string()),
-                ) {
-                    Err(e) => println!("got error: {:?}", e),
-                    _ => {}
-                };
+
+    let (player1, player2) = match ongoing_match {
+        OngoingMatch::HumanMatch(h) => {
+            let user1 = discord
+                .get_member(server_id, UserId(h.red_player_id))
+                .expect("failed to find member");
+            let user2 = discord
+                .get_member(server_id, UserId(h.blue_player_id))
+                .expect("failed to find member");
+            (
+                format!(":red_circle: {}", user1.display_name()),
+                format!(":blue_circle: {}", user2.display_name()),
+            )
+        }
+        OngoingMatch::ComputerMatch(c) => {
+            let user = discord
+                .get_member(server_id, UserId(c.player_id))
+                .expect("failed to find member");
+            if c.player_is_red {
+                (
+                    format!(":red_circle: {}", user.display_name()),
+                    ":blue_circle: Connect4Bot".to_string(),
+                )
+            } else {
+                (
+                    ":red_circle: Connect4Bot".to_string(),
+                    format!(":blue_circle: {}", user.display_name()),
+                )
             }
         }
+    };
+
+    let board = match ongoing_match {
+        OngoingMatch::HumanMatch(h) => &h.board,
+        OngoingMatch::ComputerMatch(c) => &c.board,
+    };
+
+    let mut board_string = board.display(
+        ":red_circle:",
+        ":blue_circle:",
+        ":white_circle:",
+        "",
+        "",
+        "\n",
+        "",
+    );
+
+    board_string.push_str(":one::two::three::four::five::six::seven:");
+
+    // blue = 6cace9, red = ce4147
+    let embed_building_closure = |embed_builder: EmbedBuilder, b: &Board| match b.game_status() {
+        GameStatus::Turn(Player::Red) => embed_builder
+            .title("Connect4 game in progress")
+            .fields(|fields_builder: EmbedFieldsBuilder| {
+                fields_builder
+                    .field("Player one", &format!("**{}**", &player1), true)
+                    .field("Player two", &player2, true)
+                    .field("The board", &board_string, false)
+            })
+            .color(0xce4147),
+        GameStatus::Turn(Player::Blue) => embed_builder
+            .title("Connect4 game in progress")
+            .fields(|fields_builder: EmbedFieldsBuilder| {
+                fields_builder
+                    .field("Player one", &player1, true)
+                    .field("Player two", &format!("**{}**", &player2).to_string(), true)
+                    .field("The board", &board_string, false)
+            })
+            .color(0x6cace9),
+        GameStatus::GameOver(GameResult::Winner(Player::Red)) => embed_builder
+            .title("Connect4 game over!")
+            .fields(|fields_builder: EmbedFieldsBuilder| {
+                fields_builder
+                    .field("Winner", &player1, false)
+                    .field("Player one", &player1, true)
+                    .field("Player two", &player2, true)
+                    .field("The board", &board_string, false)
+            })
+            .color(0x00cc99),
+        GameStatus::GameOver(GameResult::Winner(Player::Blue)) => embed_builder
+            .title("Connect4 game over!")
+            .fields(|fields_builder: EmbedFieldsBuilder| {
+                fields_builder
+                    .field("Winner", &player2, false)
+                    .field("Player one", &player1, true)
+                    .field("Player two", &player2, true)
+                    .field("The board", &board_string, false)
+            })
+            .color(0x00cc99),
+        GameStatus::GameOver(GameResult::Tie) => embed_builder
+            .title("Connect4 game over!")
+            .fields(|fields_builder: EmbedFieldsBuilder| {
+                fields_builder
+                    .field("Tied game", "", false)
+                    .field("Player one", &player1, true)
+                    .field("Player two", &player2, true)
+                    .field("The board", &board_string, false)
+            })
+            .color(0xffff99),
+    };
+
+    let message = match ongoing_match.get_message_id() {
+        Some(message_id) => discord
+            .edit_embed(channel_id, MessageId(message_id), |e| {
+                embed_building_closure(e, &board)
+            })
+            .expect("failed to send embed"),
+        None => discord
+            .send_embed(channel_id, "", |e| embed_building_closure(e, &board))
+            .expect("failed to send embed"),
+    };
+
+    if prompt_player {
+        match last_move {
+            None => {
+                for (i, emoji) in COLUMN_EMOJI.iter().enumerate() {
+                    if ongoing_match.get_board().is_move_legal(i as u8) {
+                        println!("attempting to react with {}", emoji);
+                        match discord.add_reaction(
+                            channel_id,
+                            message.id,
+                            ReactionEmoji::Unicode(emoji.to_string()),
+                        ) {
+                            Err(e) => println!("got error: {:?}", e),
+                            _ => {}
+                        };
+                    }
+                }
+            }
+            Some(m) => {
+                let my_id = discord.get_current_user().expect("failed to find self").id;
+                let reaction_of_interest =
+                    ReactionEmoji::Unicode(COLUMN_EMOJI[m as usize].to_string());
+                let reactions = discord
+                    .get_reactions(
+                        channel_id,
+                        message.id,
+                        reaction_of_interest.clone(),
+                        None,
+                        None,
+                    )
+                    .expect("Failed to retrieve reactions");
+                for u in reactions {
+                    if my_id.0 != u.id.0 {
+                        discord
+                            .delete_reaction(
+                                channel_id,
+                                message.id,
+                                Some(u.id),
+                                reaction_of_interest.clone(),
+                            )
+                            .expect("failed to delete reaction");
+                    }
+                }
+                if !ongoing_match.get_board().is_move_legal(m as u8) {
+                    discord
+                        .delete_reaction(channel_id, message.id, None, reaction_of_interest)
+                        .expect("failed to add reaction");
+                }
+            }
+        };
+
         persistency::register_interaction(conn, message.id.0, &ongoing_match);
     }
 }
 
-fn show_help(
-    conn: &mut Connection,
-    discord: &Discord,
-    channel_id: ChannelId,
-) {
+fn show_help(conn: &mut Connection, discord: &Discord, channel_id: ChannelId) {
     discord
-        .send_message(channel_id, "Help message", "", false)
+        .send_message(channel_id, 
+        "To play a match, try typing ```!c4 challenge @[tag-the-user-you-want-to play]```\
+        You can also play against me with ```!c4 challenge @Connect4Bot```\
+        If you keep seeing this message, it might be that you are already playing a game in this channel. Go finish that one first!You can only play one match at a time per channel.",
+         "", false)
         .expect("failed to send message");
 }
-
 
 fn show_error(
     conn: &mut Connection,
     discord: &Discord,
     channel_id: ChannelId,
-    user_id : &UserId, 
-    user_error: &UserError, 
+    user_id: &UserId,
+    user_error: &UserError,
 ) {
     discord
         .send_message(channel_id, "Help message", "", false)
@@ -527,4 +662,3 @@ fn decide_random_order(play_order: PlayOrder) -> PlayOrder {
 fn search_depth_at_level(ai_level: u8) -> u32 {
     32768
 }
-
