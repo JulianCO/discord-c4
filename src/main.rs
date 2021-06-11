@@ -3,7 +3,7 @@ mod protocol;
 
 use connect4::persistency;
 
-use discord::model::{Event, ReactionEmoji};
+use discord::model::{Event, ReactionEmoji, Channel};
 use discord::Discord;
 
 use std::env;
@@ -29,17 +29,19 @@ fn main() {
     loop {
         match connection.recv_event() {
             Ok(Event::MessageCreate(message)) => {
-                println!("message sent with content: {}", message.content);
-                let request = protocol::parse_request(&message, &bot_id);
-                println!("Understood request : {:?}", request);
-                let responses = protocol::process_request(&mut conn, &request);
-                println!("Replying with {:?}", responses);
-                protocol::communicate_responses(
-                    &mut conn,
-                    &discord,
-                    message.channel_id,
-                    &responses,
-                );
+                if let Result::Ok(Channel::Public(_)) = discord.get_channel(message.channel_id) {
+                    println!("message sent with content: {}", message.content);
+                    let request = protocol::parse_request(&message, &bot_id);
+                    println!("Understood request : {:?}", request);
+                    let responses = protocol::process_request(&mut conn, &request);
+                    println!("Replying with {:?}", responses);
+                    protocol::communicate_responses(
+                        &mut conn,
+                        &discord,
+                        message.channel_id,
+                        &responses,
+                    );
+                }
             }
             Ok(Event::ReactionAdd(reaction)) => {
                 if reaction.user_id.0 != bot_id.0 {

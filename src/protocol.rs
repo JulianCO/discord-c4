@@ -607,9 +607,9 @@ fn show_game(
 
 fn show_help(conn: &mut Connection, discord: &Discord, channel_id: ChannelId) {
     discord
-        .send_message(channel_id, 
-        "To play a match, try typing ```!c4 challenge @[tag-the-user-you-want-to play]```\
-        You can also play against me with ```!c4 challenge @Connect4Bot```\
+        .send_message(channel_id,
+        "To play a match, try typing ```!c4 challenge @[tag-the-user-you-want-to play]```
+        You can also play against me with ```!c4 challenge @Connect4Bot```
         If you keep seeing this message, it might be that you are already playing a game in this channel. Go finish that one first!You can only play one match at a time per channel.",
          "", false)
         .expect("failed to send message");
