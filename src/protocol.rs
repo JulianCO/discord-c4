@@ -168,8 +168,22 @@ pub fn process_request(conn: &mut Connection, request: &Request) -> Vec<Response
         Request::SeeGame(_channel, _player_id) => {
             vec![]
         }
-        Request::Resign(_channel, _player_id) => {
-            vec![]
+        Request::Resign(channel_id, player_id) => {
+            let found_match =
+                persistency::retrieve_match_by_player(conn, channel_id.0, player_id.0);
+            match found_match {
+                Err(Error::NotCompleted(NotCompletedReason::PlayerHasNoMatches)) => {
+                    vec![Response::ShowError(*player_id, UserError::PlayerNotPlaying)]
+                }
+
+                Err(_) => {
+                    panic!("Unknown error retrieving match")
+                }
+                Ok(ongoing_match) => {
+                    persistency::delete_match(conn, ongoing_match.get_id());
+                    vec![]
+                }
+            }
         }
     }
 }
