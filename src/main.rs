@@ -19,8 +19,9 @@ fn main() {
     )
     .expect("login failed");
 
+    println!("making a database at /etc/c4-matches/prod_env.sqlite");
     let mut conn =
-        persistency::initialize("test_env.sqlite").expect("failed to initialize database");
+        persistency::initialize("/etc/c4-matches/prod_env.sqlite").expect("failed to initialize database");
 
     let (mut connection, _) = discord.connect().expect("connect failed");
     let bot_id = discord.get_current_user().expect("failed to find self").id;

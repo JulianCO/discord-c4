@@ -2,13 +2,13 @@
 name = "discord-c4"
 version = "0.1.0"
 authors = ["Julian Osorio <juliancamilo.osorio@gmail.com>"]
-edition = "2018"
+edition = "2021"
 build = "build.rs"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-discord = { git = "https://github.com/SpaceManiac/discord-rs" }
+discord = { git = "https://github.com/SpaceManiac/discord-rs", default-features = false, features = [] }
 rand = "0.8.0"
 
 [dependencies.rusqlite]
