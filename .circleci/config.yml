@@ -22,7 +22,7 @@ jobs:
           command: "echo Hello, World!"
       - run: sudo curl https://sh.rustup.rs -sSf | sh -s -- -y
       - run: source $HOME/.cargo/env
-      - run: cargo test
+      - run: $HOME/.cargo/bin/cargo test
 
 
 # Invoke jobs via workflows
